@@ -73,7 +73,7 @@ def parse_environment_variables(json_obj, config):
     for key, value in json_obj.items():
         if key != "grid" and key != "iter":
             command += " --" + key + "=" + str(value)
-    command += " --experiment_name=" + get_experiment_name(config)
+    command += " --config.experiment_name=" + get_experiment_name(config)
     command += " --config.rng_seed=" + str(random.randint(0, 1000000))
     return command
 

@@ -139,8 +139,8 @@ def dpadamcorr(batch_size, learning_rate, b1, eps_root, l2_norms_threshold,
                base_sensitivity, noise_multiplier, init_rng):
   """A differentially-private version of Adam Corr."""
   b2 = 1 - (1 - b1)**2
-  noise_stds = compute_opt_noise(l2_norms_threshold, base_sensitivity, noise_multiplier)
+  sigmas = compute_opt_noise(l2_norms_threshold, base_sensitivity, noise_multiplier)
   return optax.chain(
       dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier,
                    init_rng), 
-      adamcorr(batch_size, noise_stds, l2_norms_threshold, learning_rate, b1, b2, 0, eps_root))
+      adamcorr(sigmas, learning_rate, b1, b2, 0, eps_root))

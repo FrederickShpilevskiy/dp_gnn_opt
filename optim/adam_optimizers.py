@@ -14,10 +14,8 @@ import chex
 LOGGING = True
 # LOGGING = False
 
-def get_summary_stats(a, prefix, sqrt=False):
+def get_summary_stats(a, prefix):
     a_flattened = tree_flatten_1dim(a)
-    if sqrt:
-        a_flattened = jnp.sqrt(a_flattened)
     a_min = jnp.min(a_flattened)
     a_max = jnp.max(a_flattened)
     a_mean = jnp.mean(a_flattened)
@@ -57,9 +55,7 @@ class ScaleByAdamStateCorrLong(NamedTuple):
 
 
 def scale_by_adam_corr(
-        batch_size: int,
-        noise_multipliers: float,
-        l2_norms_threshold: float,
+        sigmas: list,
         b1: float,
         b2: float,
         eps: float,
@@ -95,8 +91,7 @@ def scale_by_adam_corr(
         # corr for noise variance
         # sum_i=1^t x^(t-i) = (x^t-1)/(x-1), multiply by (1-x) = 1-x^t
         noise_errs = jax.tree_map(
-            lambda noise_multiplier, l2_norm: (1 / batch_size ** 2) * noise_multiplier ** 2 * l2_norm ** 2 * (1 - b2 ** count_inc),
-            noise_multipliers, l2_norms_threshold)
+            lambda sigma: sigma ** 2 * (1 - b2 ** count_inc), sigmas)
         # # 1- replace small values with eps_root
         nu_corr = jax.tree_map(lambda x, noise_err: jnp.maximum(x - noise_err, eps_root), nu, noise_errs)
         nu_hat = bias_correction(nu_corr, b2, count_inc)
@@ -113,9 +108,9 @@ def scale_by_adam_corr(
         if LOGGING:
             summary_stats =  {**get_summary_stats(mu_hat_clean, 'mt_clean'), 
                               **get_summary_stats(mu_hat, 'mt_noised'),
-                              **get_summary_stats(nu_hat_clean, 'vt_clean', sqrt=True),
-                              **get_summary_stats(nu_hat_uncorr, 'vt_noised', sqrt=True),
-                              **get_summary_stats(nu_hat, 'vt_corr', sqrt=True)}
+                              **get_summary_stats(nu_hat_clean, 'vt_clean'),
+                              **get_summary_stats(nu_hat_uncorr, 'vt_noised'),
+                              **get_summary_stats(nu_hat, 'vt_corr')}
         else:
             summary_stats = {}
         # return updates and state
@@ -127,9 +122,7 @@ def scale_by_adam_corr(
     return base.GradientTransformation(init_fn, update_fn)
 
 def adamcorr(
-    batch_size: int,
-    noise_multipliers: list,
-    l2_norms_threshold: list,
+    sigmas: list,
     learning_rate: float,
     b1: float,
     b2: float,
@@ -139,8 +132,7 @@ def adamcorr(
 ) -> base.GradientTransformation:
     return combine.chain(
         scale_by_adam_corr(
-            batch_size=batch_size, noise_multipliers=noise_multipliers, l2_norms_threshold=l2_norms_threshold,
-            b1=b1, b2=b2, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
+            sigmas=sigmas, b1=b1, b2=b2, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
         _scale_by_learning_rate(learning_rate),
     )
 
@@ -190,9 +182,8 @@ def scale_by_adam(
         if LOGGING:
             summary_stats =  {**get_summary_stats(mu_hat_clean, 'mt_clean'), 
                               **get_summary_stats(mu_hat, 'mt_noised'),
-                              **get_summary_stats(nu_hat_clean, 'vt_clean', sqrt=True),
-                              **get_summary_stats(nu_hat_uncorr, 'vt_noised', sqrt=True),
-                              **get_summary_stats(nu_hat, 'vt_corr', sqrt=True)}
+                              **get_summary_stats(nu_hat_clean, 'vt_clean'),
+                              **get_summary_stats(nu_hat, 'vt_noised')}
         else:
             summary_stats = {}
         # return updates and state

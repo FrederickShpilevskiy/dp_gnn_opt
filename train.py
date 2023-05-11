@@ -316,6 +316,11 @@ def compute_base_sensitivity(config):
   raise ValueError('Not supported for num_message_passing_steps > 2.')
 
 
+def tree_flatten_1dim(tree):
+    tree_flat, _ = jax.tree_flatten(tree)
+    return jnp.concatenate([i.flatten() for i in tree_flat])
+
+
 def create_optimizer(
     apply_fn,
     params,
@@ -338,6 +343,11 @@ def create_optimizer(
         'base_sensitivity': base_sensitivity,
         'noise_multiplier': config.training_noise_multiplier,
     }
+    
+    sigmas = optimizers.compute_opt_noise(l2_norms_threshold, base_sensitivity, 
+                                          config.training_noise_multiplier)
+    wandb.config.clipping_thresholds = tree_flatten_1dim(l2_norms_threshold)
+    wandb.config.sigmas = tree_flatten_1dim(sigmas)
 
   if config.optimizer == 'sgd':
     opt_params = {
@@ -352,6 +362,8 @@ def create_optimizer(
   if config.optimizer == 'adam':
     opt_params = {
         'learning_rate': config.learning_rate,
+        'b1': config.b1,
+        'eps': config.eps
     }
     if config.differentially_private_training:
       return optimizers.dpadam(**opt_params, **privacy_params)
@@ -427,8 +439,6 @@ def log_metrics(step, metrics,
   metrics = {
       metric + postfix: metric_val for metric, metric_val in metrics.items()
   }
-
-  print({**metrics, **summary_stats})
 
   # Log metrics to WandB
   wandb.log({**metrics, **summary_stats})
@@ -543,8 +553,6 @@ def train_and_evaluate(config,
       # Update parameters.
       state = update_model(state, grads)
       # Get optimizer summary stats
-      if (step == initial_step):
-        print(state.opt_state[1])
       summary_stats = state.opt_state[1][0].summary_stats
 
     # Quick indication that training is happening.
