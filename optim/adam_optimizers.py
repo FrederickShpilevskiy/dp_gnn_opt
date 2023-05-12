@@ -104,9 +104,15 @@ def scale_by_adam_corr(
         nu_clean = update_moment_per_elem_norm(clean_updates, state.nu_clean, b2, 2)
         mu_hat_clean = bias_correction(mu_clean, b1, count_inc)
         nu_hat_clean = bias_correction(nu_clean, b2, count_inc)
+
+        num_corr = jnp.sum(tree_flatten_1dim(jax.tree_map(lambda x: jnp.sum((x - noise_err) > eps_root), nu)))
+        dummy_count = jnp.sum(tree_flatten_1dim(jax.tree_map(lambda x: jnp.sum(~jnp.isnan(x)), nu_hat)))
+        perc_corr = num_corr / dummy_count
+
         # perform logging
         if LOGGING:
-            summary_stats =  {**get_summary_stats(mu_hat_clean, 'mt_clean'), 
+            summary_stats =  {'perc_corr': perc_corr,
+                              **get_summary_stats(mu_hat_clean, 'mt_clean'), 
                               **get_summary_stats(mu_hat, 'mt_noised'),
                               **get_summary_stats(nu_hat_clean, 'vt_clean'),
                               **get_summary_stats(nu_hat_uncorr, 'vt_noised'),
