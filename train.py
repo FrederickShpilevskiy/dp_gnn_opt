@@ -374,7 +374,7 @@ def create_optimizer(
         'batch_size': config.batch_size,
         'learning_rate': config.learning_rate,
         'b1': config.b1,
-        'eps_root': config.eps_root,
+        'eps_root_multiplier': config.eps_root_multiplier,
     }
     if config.differentially_private_training:
       return optimizers.dpadamcorr(**opt_params, **privacy_params)
@@ -468,7 +468,7 @@ def train_and_evaluate(config,
   rng = jax.random.PRNGKey(config.rng_seed)
 
   # Set up logging.
-  wandb.init(project=config.wandb_project, config=dict(config), name=config.experiment_name)
+  wandb.init(project=config.wandb_project, config=dict(config), name=config.experiment_name, group=config.group)
   summary_writer = metric_writers.create_default_writer(workdir)
   summary_writer.write_hparams(dict(config))
 

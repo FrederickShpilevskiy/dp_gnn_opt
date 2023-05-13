@@ -71,10 +71,12 @@ def get_experiment_name(config):
 def parse_environment_variables(json_obj, config):
     command = " --workdir=./tmp/" + get_experiment_name(config)
     for key, value in json_obj.items():
-        if key != "grid" and key != "iter":
-            command += " --" + key + "=" + str(value)
+        if key == "config":
+            command += " --config=" + str(value)
+        elif key != "grid" and key != "iter":
+            command += " --config." + key + "=" + str(value)
     command += " --config.experiment_name=" + get_experiment_name(config)
-    command += " --config.rng_seed=" + str(random.randint(0, 1000000))
+    # command += " --config.rng_seed=" + str(random.randint(0, 1000000)) # Use same rng seed
     return command
 
 

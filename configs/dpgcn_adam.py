@@ -33,11 +33,12 @@ def get_config():
   config.dataset_path = 'datasets/'
   config.wandb_project = 'gnn_adam_corr-v2'
   config.experiment_name = 'baseline'
+  config.group = 'baselines'
   config.pad_subgraphs_to = 100
   config.multilabel = False
   config.adjacency_normalization = 'inverse-degree'
   config.model = 'gcn'
-  config.latent_size = 25
+  config.latent_size = 100
   config.num_encoder_layers = 1
   config.num_message_passing_steps = 1
   config.num_decoder_layers = 2
@@ -52,14 +53,14 @@ def get_config():
   config.max_training_epsilon = 12
   config.evaluate_every_steps = 10
   config.checkpoint_every_steps = 50
-  config.rng_seed = 123
+  config.rng_seed = 86583
   config.optimizer = 'adam'
   config.learning_rate = 3e-3
   if config.optimizer == 'sgd':
     config.momentum = 0.
     config.nesterov = False
     config.learning_rate = 1.
-  config.eps_root = 1e-8
+  config.eps_root_multiplier = 0.1
   config.b1 = 0.9
   config.eps = 1e-12
   config.batch_size = 10000
