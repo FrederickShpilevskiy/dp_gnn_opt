@@ -68,15 +68,16 @@ def get_experiment_name(config):
     return experiment_name
 
 
-def parse_environment_variables(json_obj, config):
-    command = " --workdir=./tmp/" + get_experiment_name(config)
+def parse_environment_variables(json_obj, config, iteration):
+    command = " --workdir=./tmp/" + get_experiment_name(config) + ",iter=" + str(iteration)
     for key, value in json_obj.items():
         if key == "config":
             command += " --config=" + str(value)
-        elif key != "grid" and key != "iter":
+        elif key == "random" and value == True:
+            command += " --config.rng_seed=" + str(random.randint(0, 1000000)) # Use same rng seed
+        elif key != "grid" and key != "iter" :
             command += " --config." + key + "=" + str(value)
     command += " --config.experiment_name=" + get_experiment_name(config)
-    # command += " --config.rng_seed=" + str(random.randint(0, 1000000)) # Use same rng seed
     return command
 
 
@@ -104,10 +105,11 @@ if __name__ == '__main__':
         config = {}
         for key, value in grid.items():
             config[key] = value[i]
-        # parse command for runner
-        command = "python main.py" + parse_environment_variables(json_obj, config) + parse_args(config)
         # write command
-        command_file.write(iterations * (command + "\n"))
+        for iteration in range(1, iterations+1):
+            # parse command for runner
+            command = "python main.py" + parse_environment_variables(json_obj, config, iteration) + parse_args(config)
+            command_file.write(command + "\n")
 
     # close files
     command_file.close()

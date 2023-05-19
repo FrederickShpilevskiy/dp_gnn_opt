@@ -245,6 +245,8 @@ def estimate_clipping_thresholds(
   grad_norms = jax.tree_map(jax.vmap(jnp.linalg.norm), grads)
   get_percentile = lambda norms: jnp.percentile(norms, l2_norm_clip_percentile)
   l2_norms_threshold = jax.tree_map(get_percentile, grad_norms)
+  l2_norm_median = jnp.median(tree_flatten_1dim(l2_norms_threshold))
+  l2_norms_threshold = jax.tree_map(lambda layer: l2_norm_median, grad_norms)
   return l2_norms_threshold
 
 
@@ -374,7 +376,7 @@ def create_optimizer(
         'batch_size': config.batch_size,
         'learning_rate': config.learning_rate,
         'b1': config.b1,
-        'eps_root_multiplier': config.eps_root_multiplier,
+        'eps_root': config.eps_root,
     }
     if config.differentially_private_training:
       return optimizers.dpadamcorr(**opt_params, **privacy_params)
@@ -426,7 +428,7 @@ def compute_metrics(logits, labels,
 
 
 def log_metrics(step, metrics,
-                summary_stats,
+                adam_summary_stats,
                 summary_writer, 
                 postfix = ''):
   """Logs all metrics."""
@@ -441,7 +443,7 @@ def log_metrics(step, metrics,
   }
 
   # Log metrics to WandB
-  wandb.log({**metrics, **summary_stats})
+  wandb.log({**metrics, **adam_summary_stats})
 
 
 def get_estimation_indices(
@@ -509,8 +511,11 @@ def train_and_evaluate(config,
   checkpoint_dir = os.path.join(workdir, 'checkpoints')
   ckpt = checkpoint.Checkpoint(checkpoint_dir, max_to_keep=2)
   state = ckpt.restore_or_initialize(state)
-  # Get optimizer summary stats
-  summary_stats = state.opt_state[1][0].summary_stats
+  # Get optimizer Adam summary stats
+  if config.optimizer == 'sgd':
+    adam_summary_stats = {}
+  else:
+    adam_summary_stats = state.opt_state[1][0].summary_stats
   initial_step = int(state.step) + 1
 
   # Log overview of parameters.
@@ -521,7 +526,7 @@ def train_and_evaluate(config,
   metrics_after_init = compute_metrics(logits, labels, masks)
   metrics_after_init['epsilon'] = 0
   log_metrics(
-      0, metrics_after_init, summary_stats, summary_writer, postfix='')
+      0, metrics_after_init, adam_summary_stats, summary_writer, postfix='')
 
   # Train model.
   rng, train_rng = jax.random.split(rng)
@@ -552,13 +557,36 @@ def train_and_evaluate(config,
 
       # Update parameters.
       state = update_model(state, grads)
-      # Get optimizer summary stats
-      summary_stats = state.opt_state[1][0].summary_stats
-
+      # Get Adam optimizer summary stats
+      if config.optimizer == 'sgd':
+        adam_summary_stats = {}
+      else:
+        adam_summary_stats = state.opt_state[1][0].summary_stats
+      
     # Quick indication that training is happening.
     logging.log_first_n(logging.INFO, 'Finished training step %d.', 10, step)
     for hook in hooks:
       hook(step)
+
+    # # Print the stuff for table
+    # if step == 65 or step == 650:
+    #   print(f"Step: {step}")
+    #   cols = ['min', 'q25', 'median', 'q75', 'max', 'mean']
+    #   rows = ['mt_clean_', 'mt_noised_', 'vt_clean_', 'vt_noised_', 'vt_corr_']
+    #   print("Min, Q1, Median, Q3, Max, Mean")
+    #   for row in rows:
+    #     string = ""
+    #     for col in cols:
+    #       string += f"& {summary_stats[row + col]:.3e} "
+    #     print(string)
+    #   # deltas
+    #   rows = ['vt_clean_', 'vt_noised_', 'vt_corr_']
+    #   for row in rows:
+    #     string = ""
+    #     for col in cols:
+    #       string += f"& {(summary_stats['mt_noised_' + col] / np.sqrt(summary_stats[row + col])):.3e} "
+    #     print(string)
+
 
     # Evaluate, if required.
     is_last_step = (step == config.num_training_steps - 1)
@@ -576,7 +604,7 @@ def train_and_evaluate(config,
         log_metrics(
             step,
             metrics_during_training,
-            summary_stats, 
+            adam_summary_stats, 
             summary_writer)
 
     # Checkpoint, if required.

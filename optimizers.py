@@ -46,6 +46,7 @@ def dp_aggregate(
     base_sensitivity,
     noise_multiplier,
     init_rng,
+    return_type='original',
 ):
   """Aggregates gradients based on the DP-SGD algorithm.
 
@@ -66,6 +67,7 @@ def dp_aggregate(
     l2_norms_threshold: max L2 norm of the per-example gradients for each layer.
     base_sensitivity: ratio of sensitivity to the clipping norm.
     noise_multiplier: ratio of noise standard deviation to the sensitivity.
+    return_type: 'original' or 'custom', determines if summed updates should be included too ('custom')
     init_rng: initial jax.random.PRNGKey
 
   Returns:
@@ -101,8 +103,12 @@ def dp_aggregate(
         summed_updates, noise_stds, rng_tree)
     noisy_updates = jax.tree_map(lambda g, noise: (g + noise), summed_updates,
                                  noise)
-    return ((summed_updates, noisy_updates),
-            optax.DifferentiallyPrivateAggregateState(rng_key=new_key))
+    if return_type == 'original':
+      return (noisy_updates,
+              optax.DifferentiallyPrivateAggregateState(rng_key=new_key))
+    else:
+      return ((summed_updates, noisy_updates),
+              optax.DifferentiallyPrivateAggregateState(rng_key=new_key))
 
   return optax.GradientTransformation(init_fn, update_fn)
 
@@ -132,15 +138,14 @@ def dpadam(learning_rate, b1, eps, l2_norms_threshold,
   b2 = 1 - (1 - b1)**2
   return optax.chain(
       dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier,
-                   init_rng), adam(learning_rate, b1, b2, eps))
+                   init_rng, return_type='custom'), adam(learning_rate, b1, b2, eps))
 
 
-def dpadamcorr(batch_size, learning_rate, b1, eps_root_multiplier, l2_norms_threshold,
+def dpadamcorr(batch_size, learning_rate, b1, eps_root, l2_norms_threshold,
                base_sensitivity, noise_multiplier, init_rng):
   """A differentially-private version of Adam Corr."""
   b2 = 1 - (1 - b1)**2
   sigmas = compute_opt_noise(l2_norms_threshold, base_sensitivity, noise_multiplier)
   return optax.chain(
-      dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier,
-                   init_rng), 
-      adamcorr(sigmas, learning_rate, b1, b2, 0, eps_root_multiplier))
+      dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier, init_rng,
+                   return_type='custom'), adamcorr(sigmas, learning_rate, b1, b2, 0, eps_root))

@@ -39,9 +39,9 @@ def get_config():
   config.adjacency_normalization = 'inverse-degree'
   config.model = 'gcn'
   config.latent_size = 100
-  config.num_encoder_layers = 1
+  config.num_encoder_layers = 2
   config.num_message_passing_steps = 1
-  config.num_decoder_layers = 2
+  config.num_decoder_layers = 1
   config.activation_fn = 'tanh'
   config.num_classes = 40
   config.max_degree = 7
@@ -54,13 +54,13 @@ def get_config():
   config.evaluate_every_steps = 10
   config.checkpoint_every_steps = 50
   config.rng_seed = 86583
-  config.optimizer = 'adam'
+  config.optimizer = 'sgd'
   config.learning_rate = 3e-3
   if config.optimizer == 'sgd':
     config.momentum = 0.
     config.nesterov = False
     config.learning_rate = 1.
-  config.eps_root_multiplier = 0.1
+  config.eps_root = 0.1
   config.b1 = 0.9
   config.eps = 1e-12
   config.batch_size = 10000

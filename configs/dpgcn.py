@@ -53,7 +53,7 @@ def get_config():
   config.evaluate_every_steps = 50
   config.checkpoint_every_steps = 50
   config.rng_seed = 0
-  config.optimizer = 'adam'
+  config.optimizer = 'sgd'
   config.learning_rate = 3e-3
   if config.optimizer == 'sgd':
     config.momentum = 0.

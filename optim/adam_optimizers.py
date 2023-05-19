@@ -59,7 +59,7 @@ def scale_by_adam_corr(
         b1: float,
         b2: float,
         eps: float,
-        eps_root_multiplier: float,
+        eps_root: float,
         mu_dtype: Optional[Any] = None,
 ) -> base.GradientTransformation:
     mu_dtype = utils.canonicalize_dtype(mu_dtype)
@@ -92,20 +92,23 @@ def scale_by_adam_corr(
         # sum_i=1^t x^(t-i) = (x^t-1)/(x-1), multiply by (1-x) = 1-x^t
 
         # Mathias suggestion
+        nu_hat = bias_correction(nu, b2, count_inc)
         noise_errs = jax.tree_map(lambda sigma: sigma ** 2, sigmas)
-        # # 1- replace small values with eps_root
-        nu_corr = jax.tree_map(lambda x, noise_err: jnp.maximum((x / (1 - b2 ** count_inc)) - noise_err, eps_root_multiplier * noise_err), nu, noise_errs)
-        nu_hat = bias_correction(nu_corr, b2, count_inc)
+        nu_corr = jax.tree_map(lambda x, noise_err: jnp.maximum(x - noise_err, eps_root), nu_hat, noise_errs)
+        # compute updates
+        updates = jax.tree_util.tree_map(
+            lambda m, v: m / (jnp.sqrt(v)), mu_hat, nu_corr)
 
         # noise_errs = jax.tree_map(
         #     lambda sigma: sigma ** 2 * (1 - b2 ** count_inc), sigmas)
         # # # 1- replace small values with eps_root
         # nu_corr = jax.tree_map(lambda x, noise_err: jnp.maximum(x - noise_err, eps_root_multiplier * noise_err), nu, noise_errs)
         # nu_hat = bias_correction(nu_corr, b2, count_inc)
+        # # compute updates
+        # updates = jax.tree_util.tree_map(
+        #     lambda m, v: m / (jnp.sqrt(v)), mu_hat, nu_hat)
 
-        # compute updates
-        updates = jax.tree_util.tree_map(
-            lambda m, v: m / (jnp.sqrt(v)), mu_hat, nu_hat)
+
         mu = utils.cast_tree(mu, mu_dtype)
         # clean states updated using clipped grads
         mu_clean = update_moment(clean_updates, state.mu_clean, b1, 1)
@@ -113,7 +116,11 @@ def scale_by_adam_corr(
         mu_hat_clean = bias_correction(mu_clean, b1, count_inc)
         nu_hat_clean = bias_correction(nu_clean, b2, count_inc)
 
-        num_corr = jnp.sum(tree_flatten_1dim(jax.tree_map(lambda x, noise_err: jnp.sum((x - noise_err) > (eps_root_multiplier * noise_err)), nu, noise_errs)))
+        # Mathias suggestion
+        num_corr = jnp.sum(tree_flatten_1dim(jax.tree_map(lambda x, noise_err: jnp.sum((x - noise_err) > (eps_root)), nu_hat, noise_errs)))
+
+
+        # num_corr = jnp.sum(tree_flatten_1dim(jax.tree_map(lambda x, noise_err: jnp.sum((x - noise_err) > (eps_root_multiplier * noise_err)), nu, noise_errs)))
         dummy_count = jnp.sum(tree_flatten_1dim(jax.tree_map(lambda x: jnp.sum(~jnp.isnan(x)), nu_hat)))
         perc_corr = num_corr / dummy_count
 
@@ -124,7 +131,7 @@ def scale_by_adam_corr(
                               **get_summary_stats(mu_hat, 'mt_noised'),
                               **get_summary_stats(nu_hat_clean, 'vt_clean'),
                               **get_summary_stats(nu_hat_uncorr, 'vt_noised'),
-                              **get_summary_stats(nu_hat, 'vt_corr')}
+                              **get_summary_stats(nu_corr, 'vt_corr')}
         else:
             summary_stats = {}
         # return updates and state
@@ -141,12 +148,12 @@ def adamcorr(
     b1: float,
     b2: float,
     eps: float,
-    eps_root_multiplier: float,
+    eps_root: float,
     mu_dtype: Optional[Any] = None,
 ) -> base.GradientTransformation:
     return combine.chain(
         scale_by_adam_corr(
-            sigmas=sigmas, b1=b1, b2=b2, eps=eps, eps_root_multiplier=eps_root_multiplier, mu_dtype=mu_dtype),
+            sigmas=sigmas, b1=b1, b2=b2, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
         _scale_by_learning_rate(learning_rate),
     )
 
