@@ -199,7 +199,7 @@ class GraphSAINTTransductiveDataset(Dataset):
     logging.info('Reading graph data...')
     self.adj_full = sp.load_npz(
         tf.io.gfile.GFile(os.path.join(base_path, 'adj_full.npz'), 'rb'))
-    graph = nx.from_scipy_sparse_matrix(self.adj_full)
+    graph = nx.from_scipy_sparse_array(self.adj_full)
     graph_data = nx.readwrite.node_link_data(graph)
     logging.info('Graph data loaded.')
 

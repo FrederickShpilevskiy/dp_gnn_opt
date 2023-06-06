@@ -26,7 +26,6 @@ import tensorflow as tf
 
 import train
 
-
 FLAGS = flags.FLAGS
 
 _WORKDIR = flags.DEFINE_string(

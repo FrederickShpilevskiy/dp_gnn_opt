@@ -44,6 +44,7 @@ def subsample_graph(graph, max_degree,
                     rng):
   """Subsamples the undirected input graph."""
   edges = sampler.get_adjacency_lists(graph)
+  # our edge_index is [senders, receivers], all we need to do is use our sampling code and then stick it in graph
   edges = sampler.sample_adjacency_lists(edges, graph.train_nodes, max_degree,
                                          rng)
   senders = []

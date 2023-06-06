@@ -21,7 +21,6 @@ def combine_axes(*axes):
         current_length = 1
         if combination.values():
             current_length = len(list(combination.values())[0])
-        axis = parse_axis(axis)
         # combine axis
         added_length = len(list(axis.values())[0])
         for key in combination:
@@ -58,10 +57,11 @@ def parse_args(config):
     return command
 
 
-def get_experiment_name(config):
+def get_experiment_name(json_obj, config):
     experiment_name = ""
     for key, value in config.items():
-        if value != "N/a":
+        # Add value to experiment name if it's not N/a and if the key is in "experiment_name_params" (if it exists in json_obj)
+        if value != "N/a" and ("experiment_name_params" not in json_obj or key in json_obj["experiment_name_params"]):
             experiment_name += key + "=" + str(value) + ","
     if len(experiment_name) > 0:
         return experiment_name[:-1]
@@ -69,15 +69,15 @@ def get_experiment_name(config):
 
 
 def parse_environment_variables(json_obj, config, iteration):
-    command = " --workdir=./tmp/" + get_experiment_name(config) + ",iter=" + str(iteration)
+    command = " --workdir=./tmp/" + get_experiment_name(json_obj, config) + ",iter=" + str(iteration)
     for key, value in json_obj.items():
         if key == "config":
             command += " --config=" + str(value)
         elif key == "random" and value == True:
             command += " --config.rng_seed=" + str(random.randint(0, 1000000)) # Use same rng seed
-        elif key != "grid" and key != "iter" :
+        elif key != "grid" and key != "iter"  and key != "experiment_name_params":
             command += " --config." + key + "=" + str(value)
-    command += " --config.experiment_name=" + get_experiment_name(config)
+    command += " --config.experiment_name=" + get_experiment_name(json_obj, config)
     return command
 
 

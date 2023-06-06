@@ -34,6 +34,7 @@ import ml_collections
 import numpy as np
 import optax
 import wandb
+import random
 
 import input_pipeline
 import models
@@ -483,6 +484,9 @@ def train_and_evaluate(config,
   train_indices = jnp.where(train_mask)[0]
   train_labels = labels[train_indices]
   num_training_nodes = len(train_indices)
+
+  # Get new dataset_rng
+  dataset_rng, _ = jax.random.split(dataset_rng)
 
   # Get subgraphs.
   if config.differentially_private_training:
