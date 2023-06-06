@@ -10,3 +10,5 @@ gdown
 chex
 ml_collections
 wandb
+clu
+jraph
