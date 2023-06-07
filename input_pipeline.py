@@ -21,6 +21,8 @@ import chex
 import jraph
 import ml_collections
 import numpy as np
+from scipy import sparse
+import copy
 
 import dataset_readers
 import normalizations
@@ -39,23 +41,79 @@ def add_reverse_edges(
   graph.receivers = receivers
   return graph
 
+def filter_edge_index(senders, receivers, mask):
+  # remap edges 
+  # (i.e. if we remove 3, then edge 2 -> 4 becomes 2 -> 3)
+  node_indices = np.arange(np.shape(mask)[0])[mask]
+  edge_mapping = np.zeros(np.shape(mask)[0])
+  edge_mapping[node_indices] = np.arange(np.shape(node_indices)[0])
+  # remove edges containing nodes removed by mask
+  edge_mask = np.logical_and(mask[senders], mask[receivers])
+  return edge_mapping[senders[edge_mask]], edge_mapping[receivers[edge_mask]]
+
+
+# make sparse adjacency matrix, A
+def get_adjacency_matrix(senders, receivers, num_nodes):
+    values = np.ones(np.shape(senders)[0])
+    A = sparse.coo_array((values, (senders, receivers)), shape=(num_nodes, num_nodes))
+    return A
+
+  
+def index_to_mask(n, index):
+  mask = np.zeros(n, dtype=bool)
+  mask[index] = True
+  return mask
+
+def mask_to_index(mask):
+  return np.where(mask)
+
+
+def sample_edgelists(graph, K, rng):
+  graph = copy.copy(graph)
+  x, y, senders, receivers = graph.node_features, graph.node_labels, graph.senders, graph.receivers
+  n = np.shape(x)[0]
+  train_mask = index_to_mask(n, graph.train_nodes)
+  # only sample train edges
+  train_edge_mask = train_mask[senders]
+  # get out degrees
+  A = get_adjacency_matrix(senders, receivers, n)
+  eps = 1e-8
+  out_degrees = A.sum(axis=1) + eps
+  # sample out edges
+  p = K / (2*out_degrees[senders])
+  mask = np.random.rand(np.shape(p)[0], ) < p
+  mask = np.logical_or(mask, ~train_edge_mask) # only sample not train edges!
+  sampled_senders, sampled_receivers = senders[mask], receivers[mask]
+  # check that no nodes have more in-degree than K
+  A = get_adjacency_matrix(sampled_senders, sampled_receivers, n)
+  out_degrees = A.sum(axis=1)
+  mask = out_degrees <= K
+  mask = np.logical_or(mask, ~train_mask) # only remove train nodes
+  # filter x, y, and edge_index according to nodes with out-degree 
+  # greater than K
+  graph.train_nodes = mask_to_index(train_mask[mask])
+  graph.validation_nodes = mask_to_index(index_to_mask(n, graph.validation_nodes)[mask])
+  graph.test_nodes = mask_to_index(index_to_mask(n, graph.test_nodes)[mask])
+  graph.node_features, graph.node_labels = x[mask], y[mask]
+  graph.senders, graph.receivers = filter_edge_index(sampled_senders, sampled_receivers, mask)
+  return graph
 
 def subsample_graph(graph, max_degree,
                     rng):
-  """Subsamples the undirected input graph."""
-  edges = sampler.get_adjacency_lists(graph)
-  # our edge_index is [senders, receivers], all we need to do is use our sampling code and then stick it in graph
-  edges = sampler.sample_adjacency_lists(edges, graph.train_nodes, max_degree,
-                                         rng)
-  senders = []
-  receivers = []
-  for u in edges:
-    for v in edges[u]:
-      senders.append(u)
-      receivers.append(v)
+  """Subsamples the undirected input graph and returns a copy of the graph."""
+  graph = sample_edgelists(graph, max_degree, rng)
+  
+  # edges = sampler.get_adjacency_lists(graph)
+  # edges = sampler.sample_adjacency_lists(edges, graph.train_nodes, max_degree, rng)
+  # senders = []
+  # receivers = []
+  # for u in edges:
+  #   for v in edges[u]:
+  #     senders.append(u)
+  #     receivers.append(v)
 
-  graph.senders = senders
-  graph.receivers = receivers
+  # graph.senders = senders
+  # graph.receivers = receivers
   return graph
 
 
@@ -102,13 +160,15 @@ def add_self_loops(graph):
       n_edge=np.asarray([senders.shape[0]]))
 
 
-def get_dataset(
-    config,
-    rng,
-):
+def load_graph(config): # TODO: pass rng to sampler!
   """Load graph dataset."""
   graph = dataset_readers.get_dataset(config.dataset, config.dataset_path)
   graph = add_reverse_edges(graph)
+  return graph
+
+  
+def get_dataset(graph, config, rng):
+  """Sample graph and return graph dataset."""
   graph = subsample_graph(graph, config.max_degree, rng)
   masks = compute_masks_for_splits(graph)
   graph, labels = convert_to_graphstuple(graph)

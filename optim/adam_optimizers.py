@@ -32,7 +32,7 @@ def add_prefix(d, prefix):
     return new_dict
 
 def tree_flatten_1dim(tree):
-    tree_flat, _ = jax.tree_flatten(tree)
+    tree_flat, _ = jax.tree_util.tree_flatten(tree)
     return jnp.concatenate([i.flatten() for i in tree_flat])
 
 class ScaleByAdamStateCorr(NamedTuple):

@@ -82,7 +82,7 @@ def dp_aggregate(
 
   def update_fn(updates, state, params):
     del params
-    grads_flat, grads_treedef = jax.tree_flatten(updates)
+    grads_flat, grads_treedef = jax.tree_util.tree_flatten(updates)
     batch_size = grads_flat[0].shape[0]
 
     if any(g.ndim == 0 or batch_size != g.shape[0] for g in grads_flat):
@@ -92,7 +92,7 @@ def dp_aggregate(
           ' function expects per-example gradients as input.')
 
     new_key, *rngs = jax.random.split(state.rng_key, len(grads_flat) + 1)
-    rng_tree = jax.tree_unflatten(grads_treedef, rngs)
+    rng_tree = jax.tree_util.tree_unflatten(grads_treedef, rngs)
 
     clipped_updates = clip_by_norm(updates, l2_norms_threshold)
     summed_updates = jax.tree_map(

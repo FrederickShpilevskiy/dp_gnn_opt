@@ -66,7 +66,7 @@ def compute_loss(logits,
 def get_subgraphs(graph,
                   pad_to):
   """Creates an array of padded subgraphs."""
-  num_nodes = jax.tree_leaves(graph.nodes)[0].shape[0]
+  num_nodes = jax.tree_util.tree_leaves(graph.nodes)[0].shape[0]
   outgoing_edges = {u: [] for u in range(num_nodes)}
   for sender, receiver in zip(graph.senders, graph.receivers):
     if sender != receiver:
@@ -320,7 +320,7 @@ def compute_base_sensitivity(config):
 
 
 def tree_flatten_1dim(tree):
-    tree_flat, _ = jax.tree_flatten(tree)
+    tree_flat, _ = jax.tree_util.tree_flatten(tree)
     return jnp.concatenate([i.flatten() for i in tree_flat])
 
 
@@ -475,18 +475,17 @@ def train_and_evaluate(config,
   summary_writer = metric_writers.create_default_writer(workdir)
   summary_writer.write_hparams(dict(config))
 
-  # Get datasets.
+  # Load base graph.
   rng, dataset_rng = jax.random.split(rng)
-  dataset = input_pipeline.get_dataset(config, dataset_rng)
+  base_graph = input_pipeline.load_graph(config)
+  # Get datasets.
+  dataset = input_pipeline.get_dataset(base_graph, config, dataset_rng)
   graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
   labels = jax.nn.one_hot(labels, config.num_classes)
   train_mask = masks['train']
   train_indices = jnp.where(train_mask)[0]
   train_labels = labels[train_indices]
   num_training_nodes = len(train_indices)
-
-  # Get new dataset_rng
-  dataset_rng, _ = jax.random.split(dataset_rng)
 
   # Get subgraphs.
   if config.differentially_private_training:
@@ -572,25 +571,6 @@ def train_and_evaluate(config,
     for hook in hooks:
       hook(step)
 
-    # # Print the stuff for table
-    # if step == 65 or step == 650:
-    #   print(f"Step: {step}")
-    #   cols = ['min', 'q25', 'median', 'q75', 'max', 'mean']
-    #   rows = ['mt_clean_', 'mt_noised_', 'vt_clean_', 'vt_noised_', 'vt_corr_']
-    #   print("Min, Q1, Median, Q3, Max, Mean")
-    #   for row in rows:
-    #     string = ""
-    #     for col in cols:
-    #       string += f"& {summary_stats[row + col]:.3e} "
-    #     print(string)
-    #   # deltas
-    #   rows = ['vt_clean_', 'vt_noised_', 'vt_corr_']
-    #   for row in rows:
-    #     string = ""
-    #     for col in cols:
-    #       string += f"& {(summary_stats['mt_noised_' + col] / np.sqrt(summary_stats[row + col])):.3e} "
-    #     print(string)
-
 
     # Evaluate, if required.
     is_last_step = (step == config.num_training_steps - 1)
@@ -616,4 +596,44 @@ def train_and_evaluate(config,
       with report_progress.timed('checkpoint'):
         ckpt.save(state)
 
+    # Resample, if required.
+    if step % config.resample_every_steps == 0:
+      old_num_training_nodes = num_training_nodes
+      dataset = input_pipeline.get_dataset(base_graph, config, dataset_rng)
+      graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
+      labels = jax.nn.one_hot(labels, config.num_classes)
+      train_mask = masks['train']
+      train_indices = jnp.where(train_mask)[0]
+      train_labels = labels[train_indices]
+      num_training_nodes = len(train_indices)
+      logging.info('resampling graph: node change %d -> %d, orginal graph has %d nodes', 
+                   old_num_training_nodes, num_training_nodes, np.shape(base_graph.node_features)[0])
+
+
   return state
+
+
+
+
+
+
+
+
+# # Print the stuff for table
+    # if step == 65 or step == 650:
+    #   print(f"Step: {step}")
+    #   cols = ['min', 'q25', 'median', 'q75', 'max', 'mean']
+    #   rows = ['mt_clean_', 'mt_noised_', 'vt_clean_', 'vt_noised_', 'vt_corr_']
+    #   print("Min, Q1, Median, Q3, Max, Mean")
+    #   for row in rows:
+    #     string = ""
+    #     for col in cols:
+    #       string += f"& {summary_stats[row + col]:.3e} "
+    #     print(string)
+    #   # deltas
+    #   rows = ['vt_clean_', 'vt_noised_', 'vt_corr_']
+    #   for row in rows:
+    #     string = ""
+    #     for col in cols:
+    #       string += f"& {(summary_stats['mt_noised_' + col] / np.sqrt(summary_stats[row + col])):.3e} "
+    #     print(string)
