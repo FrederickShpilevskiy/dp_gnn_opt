@@ -52,6 +52,7 @@ def get_config():
   config.num_training_steps = 3000
   config.max_training_epsilon = 12
   config.evaluate_every_steps = 10
+  config.resample_every_steps = 50
   config.checkpoint_every_steps = 50
   config.rng_seed = 86583
   config.optimizer = 'sgd'
