@@ -47,6 +47,7 @@ def update_dummy_config(config):
   config.dataset = 'dummy'
   config.batch_size = dataset_readers.DummyDataset.NUM_DUMMY_TRAINING_SAMPLES // 2
   config.max_degree = 2
+  config.l2_norm_threshold = 0.1
   config.num_training_steps = 10
   config.num_classes = dataset_readers.DummyDataset.NUM_DUMMY_CLASSES
 

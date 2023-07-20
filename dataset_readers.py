@@ -109,44 +109,116 @@ class OGBTransductiveDataset(Dataset):
         base_path, split_property, 'test.csv.gz')
 
     if self.name == 'ogbn_mag':
-      node_feature_file = os.path.join(base_path,
-                                       'raw/node-feat/paper/node-feat.csv.gz')
-      node_label_file = os.path.join(base_path,
-                                     'raw/node-label/paper/node-label.csv.gz')
+      from torch_geometric.datasets import OGB_MAG
+      from torch_geometric.utils import mask_to_index
+      data = OGB_MAG(root='./datasets/ogbmag', preprocess='metapath2vec')[0]
+      self.senders = data['paper', 'cites', 'paper'].edge_index[0, :].numpy()
+      self.receivers = data['paper', 'cites', 'paper'].edge_index[1, :].numpy()
+      self.node_features = data['paper'].x.numpy()
+      self.node_labels = data['paper'].y.numpy()
+      self.train_nodes = mask_to_index(data['paper'].train_mask).numpy()
+      self.validation_nodes = mask_to_index(data['paper'].val_mask).numpy()
+      self.test_nodes = mask_to_index(data['paper'].test_mask).numpy()
+
+      # node_feature_file = os.path.join(base_path,
+      #                                  'raw/node-feat/paper/node-feat.csv.gz')
+      # node_label_file = os.path.join(base_path,
+      #                                'raw/node-label/paper/node-label.csv.gz')
+      # logging.info('Reading node features...')
+      # self.node_features = pd.read_csv(
+      #     node_feature_file, header=None).values.astype(np.float32)
+      # logging.info('Node features loaded.')
+
+      # logging.info('Reading node labels...')
+      # self.node_labels = pd.read_csv(
+      #     node_label_file, header=None).values.astype(np.int64).squeeze()
+      # logging.info('Node labels loaded.')
+
+      # if self.name == 'ogbn_mag':
+      #   edge_file = os.path.join(
+      #       base_path, 'raw/relations/paper___cites___paper/edge.csv.gz')
+      # else:
+      #   edge_file = os.path.join(base_path, 'raw/edge.csv.gz')
+
+      # logging.info('Reading edges...')
+      # senders_receivers = pd.read_csv(
+      #     edge_file, header=None).values.T.astype(np.int64)
+      # self.senders, self.receivers = senders_receivers
+      # logging.info('Edges loaded.')
+
+      # logging.info('Reading train, validation and test splits...')
+      # self.train_nodes = pd.read_csv(
+      #     train_split_file, header=None).values.T.astype(np.int64).squeeze()
+      # self.validation_nodes = pd.read_csv(
+      #     validation_split_file, header=None).values.T.astype(np.int64).squeeze()
+      # self.test_nodes = pd.read_csv(
+      #     test_split_file, header=None).values.T.astype(np.int64).squeeze()
+      # logging.info('Loaded train, test and validation splits.')
     else:
       node_feature_file = os.path.join(base_path, 'raw/node-feat.csv.gz')
       node_label_file = os.path.join(base_path, 'raw/node-label.csv.gz')
 
-    logging.info('Reading node features...')
-    self.node_features = pd.read_csv(
-        node_feature_file, header=None).values.astype(np.float32)
-    logging.info('Node features loaded.')
+      logging.info('Reading node features...')
+      self.node_features = pd.read_csv(
+          node_feature_file, header=None).values.astype(np.float32)
+      logging.info('Node features loaded.')
 
-    logging.info('Reading node labels...')
-    self.node_labels = pd.read_csv(
-        node_label_file, header=None).values.astype(np.int64).squeeze()
-    logging.info('Node labels loaded.')
+      logging.info('Reading node labels...')
+      self.node_labels = pd.read_csv(
+          node_label_file, header=None).values.astype(np.int64).squeeze()
+      logging.info('Node labels loaded.')
 
-    if self.name == 'ogbn_mag':
-      edge_file = os.path.join(
-          base_path, 'raw/relations/paper___cites___paper/edge.csv.gz')
-    else:
-      edge_file = os.path.join(base_path, 'raw/edge.csv.gz')
+      if self.name == 'ogbn_mag':
+        edge_file = os.path.join(
+            base_path, 'raw/relations/paper___cites___paper/edge.csv.gz')
+      else:
+        edge_file = os.path.join(base_path, 'raw/edge.csv.gz')
 
-    logging.info('Reading edges...')
-    senders_receivers = pd.read_csv(
-        edge_file, header=None).values.T.astype(np.int64)
-    self.senders, self.receivers = senders_receivers
-    logging.info('Edges loaded.')
+      logging.info('Reading edges...')
+      senders_receivers = pd.read_csv(
+          edge_file, header=None).values.T.astype(np.int64)
+      self.senders, self.receivers = senders_receivers
+      logging.info('Edges loaded.')
 
-    logging.info('Reading train, validation and test splits...')
-    self.train_nodes = pd.read_csv(
-        train_split_file, header=None).values.T.astype(np.int64).squeeze()
-    self.validation_nodes = pd.read_csv(
-        validation_split_file, header=None).values.T.astype(np.int64).squeeze()
-    self.test_nodes = pd.read_csv(
-        test_split_file, header=None).values.T.astype(np.int64).squeeze()
-    logging.info('Loaded train, test and validation splits.')
+      logging.info('Reading train, validation and test splits...')
+      self.train_nodes = pd.read_csv(
+          train_split_file, header=None).values.T.astype(np.int64).squeeze()
+      self.validation_nodes = pd.read_csv(
+          validation_split_file, header=None).values.T.astype(np.int64).squeeze()
+      self.test_nodes = pd.read_csv(
+          test_split_file, header=None).values.T.astype(np.int64).squeeze()
+      logging.info('Loaded train, test and validation splits.')
+
+    # logging.info('Reading node features...')
+    # self.node_features = pd.read_csv(
+    #     node_feature_file, header=None).values.astype(np.float32)
+    # logging.info('Node features loaded.')
+
+    # logging.info('Reading node labels...')
+    # self.node_labels = pd.read_csv(
+    #     node_label_file, header=None).values.astype(np.int64).squeeze()
+    # logging.info('Node labels loaded.')
+
+    # if self.name == 'ogbn_mag':
+    #   edge_file = os.path.join(
+    #       base_path, 'raw/relations/paper___cites___paper/edge.csv.gz')
+    # else:
+    #   edge_file = os.path.join(base_path, 'raw/edge.csv.gz')
+
+    # logging.info('Reading edges...')
+    # senders_receivers = pd.read_csv(
+    #     edge_file, header=None).values.T.astype(np.int64)
+    # self.senders, self.receivers = senders_receivers
+    # logging.info('Edges loaded.')
+
+    # logging.info('Reading train, validation and test splits...')
+    # self.train_nodes = pd.read_csv(
+    #     train_split_file, header=None).values.T.astype(np.int64).squeeze()
+    # self.validation_nodes = pd.read_csv(
+    #     validation_split_file, header=None).values.T.astype(np.int64).squeeze()
+    # self.test_nodes = pd.read_csv(
+    #     test_split_file, header=None).values.T.astype(np.int64).squeeze()
+    # logging.info('Loaded train, test and validation splits.')
 
 
 class OGBDisjointDataset(OGBTransductiveDataset):
@@ -192,63 +264,77 @@ class GraphSAINTTransductiveDataset(Dataset):
     base_name = dataset_name.replace('-disjoint', '')
     base_name = base_name.replace('-transductive', '')
 
-
     self.base_name = base_name
-    base_path = os.path.join(dataset_path, base_name)
 
-    logging.info('Reading graph data...')
-    self.adj_full = sp.load_npz(
-        tf.io.gfile.GFile(os.path.join(base_path, 'adj_full.npz'), 'rb'))
-    graph = nx.from_scipy_sparse_array(self.adj_full)
-    graph_data = nx.readwrite.node_link_data(graph)
-    logging.info('Graph data loaded.')
+    # TODO: TEMPERORY SOLUTION
+    if self.name == "reddit-transductive":
+      from torch_geometric.datasets import Reddit
+      from torch_geometric.utils import mask_to_index
+      data = Reddit(root='./datasets/reddit')[0]
+      print(data)
+      self.senders = data.edge_index[0, :].numpy()
+      self.receivers = data.edge_index[1, :].numpy()
+      self.node_features = data.x.numpy()
+      self.node_labels = data.y.numpy()
+      self.train_nodes = mask_to_index(data.train_mask).numpy()
+      self.validation_nodes = mask_to_index(data.val_mask).numpy()
+      self.test_nodes = mask_to_index(data.test_mask).numpy()
+    else:
+      base_path = os.path.join(dataset_path, base_name)
 
-    self.senders = [e[0] for e in graph.edges]
-    self.receivers = [e[1] for e in graph.edges]
+      logging.info('Reading graph data...')
+      self.adj_full = sp.load_npz(
+          tf.io.gfile.GFile(os.path.join(base_path, 'adj_full.npz'), 'rb'))
+      graph = nx.from_scipy_sparse_array(self.adj_full)
+      graph_data = nx.readwrite.node_link_data(graph)
+      logging.info('Graph data loaded.')
 
-    train_nodes = []
-    validation_nodes = []
-    test_nodes = []
+      self.senders = [e[0] for e in graph.edges]
+      self.receivers = [e[1] for e in graph.edges]
 
-    splits = json.load(
-        tf.io.gfile.GFile(os.path.join(base_path, 'role.json'), 'r'))
-    train_split = set(splits['tr'])
-    validation_split = set(splits['va'])
-    test_split = set(splits['te'])
+      train_nodes = []
+      validation_nodes = []
+      test_nodes = []
 
-    for node in graph_data['nodes']:
-      node_id = node['id']
-      if node_id in validation_split:
-        validation_nodes.append(node_id)
-      elif node_id in test_split:
-        test_nodes.append(node_id)
-      elif node_id in train_split:
-        train_nodes.append(node_id)
-      else:
-        raise ValueError(f'Node {node_id} not present in any split.')
+      splits = json.load(
+          tf.io.gfile.GFile(os.path.join(base_path, 'role.json'), 'r'))
+      train_split = set(splits['tr'])
+      validation_split = set(splits['va'])
+      test_split = set(splits['te'])
 
-    self.train_nodes = np.asarray(train_nodes)
-    self.validation_nodes = np.asarray(validation_nodes)
-    self.test_nodes = np.asarray(test_nodes)
+      for node in graph_data['nodes']:
+        node_id = node['id']
+        if node_id in validation_split:
+          validation_nodes.append(node_id)
+        elif node_id in test_split:
+          test_nodes.append(node_id)
+        elif node_id in train_split:
+          train_nodes.append(node_id)
+        else:
+          raise ValueError(f'Node {node_id} not present in any split.')
 
-    logging.info('Reading node features...')
-    node_features = np.load(
-        tf.io.gfile.GFile(os.path.join(base_path, 'feats.npy'), 'rb'))
-    logging.info('Node features loaded.')
+      self.train_nodes = np.asarray(train_nodes)
+      self.validation_nodes = np.asarray(validation_nodes)
+      self.test_nodes = np.asarray(test_nodes)
 
-    logging.info('Preprocessing node features...')
-    train_node_features = node_features[self.train_nodes]
-    scaler = sklearn.preprocessing.StandardScaler()
-    scaler.fit(train_node_features)
-    self.node_features = scaler.transform(node_features)
-    logging.info('Node features preprocessed.')
+      logging.info('Reading node features...')
+      node_features = np.load(
+          tf.io.gfile.GFile(os.path.join(base_path, 'feats.npy'), 'rb'))
+      logging.info('Node features loaded.')
 
-    logging.info('Reading node labels...')
-    class_map = json.load(
-        tf.io.gfile.GFile(os.path.join(base_path, 'class_map.json'), 'r'))
-    labels = [class_map[node_id] for node_id in sorted(class_map)]
-    self.node_labels = np.asarray(labels).squeeze()
-    logging.info('Node labels loaded.')
+      logging.info('Preprocessing node features...')
+      train_node_features = node_features[self.train_nodes]
+      scaler = sklearn.preprocessing.StandardScaler()
+      scaler.fit(train_node_features)
+      self.node_features = scaler.transform(node_features)
+      logging.info('Node features preprocessed.')
+
+      logging.info('Reading node labels...')
+      class_map = json.load(
+          tf.io.gfile.GFile(os.path.join(base_path, 'class_map.json'), 'r'))
+      labels = [class_map[node_id] for node_id in sorted(class_map)]
+      self.node_labels = np.asarray(labels).squeeze()
+      logging.info('Node labels loaded.')
 
 
 class GraphSAINTDisjointDataset(GraphSAINTTransductiveDataset):

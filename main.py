@@ -38,7 +38,6 @@ _CONFIG = config_flags.DEFINE_config_file(
     'File path to the training hyperparameter configuration.',
     lock_config=True)
 
-
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')

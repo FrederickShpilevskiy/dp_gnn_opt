@@ -123,7 +123,7 @@ def get_training_privacy_accountant(
     num_training_nodes,
     max_terms_per_node):
   """Returns an accountant that computes DP epsilon for a given number of training steps."""
-  if not config.differentially_private_training:
+  if not config.differentially_private_training or config.training_noise_multiplier == 0:
     return lambda num_training_steps: 0
 
   if config.model == 'mlp':

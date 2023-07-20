@@ -29,7 +29,7 @@ def get_config():
   """Get the default hyperparameter configuration."""
   config = ml_collections.ConfigDict()
 
-  config.dataset = 'ogbn-arxiv-disjoint'
+  config.dataset = 'ogbn_mag'
   config.dataset_path = 'datasets/'
   config.wandb_project = 'dp-gnn-extension'
   config.experiment_name = 'baseline'
@@ -53,7 +53,7 @@ def get_config():
   config.num_training_steps = 10000
   config.max_training_epsilon = 12
   config.evaluate_every_steps = 10
-  config.resample_every_steps = 50
+  config.resample_every_steps = 0
   config.checkpoint_every_steps = 50
   config.rng_seed = 86583
   config.optimizer = 'sgd'

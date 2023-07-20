@@ -17,7 +17,9 @@
 
 import functools
 import os
+import gc
 from typing import Callable, Dict, Optional, Tuple
+import torch
 
 from absl import logging
 import chex
@@ -66,6 +68,28 @@ def compute_loss(logits,
 def get_subgraphs(graph,
                   pad_to):
   """Creates an array of padded subgraphs."""
+  # from torch_geometric.loader import NeighborLoader
+  # from torch_geometric.data import Data
+  # from torch import from_numpy
+  # # print(graph)
+  # nodes = np.array(graph.nodes)
+  # edge_index = np.stack((graph.senders, graph.receivers))
+  # data = Data(x=from_numpy(nodes), edge_index=from_numpy(edge_index))
+  # # print(data.edge_index)
+  # loader = NeighborLoader(data, num_neighbors=[-1], batch_size=1)
+  # print("GETTING SUBGRAPHS")
+
+  # subgraphs = np.zeros((len(loader), pad_to), dtype=np.int32)
+  # for batch in iter(loader):
+  #   print(batch.input_id)
+  #   subgraph_indices = np.asarray(batch.n_id)[:pad_to]
+  #   subgraphs[batch.input_id] = np.pad(
+  #       subgraph_indices, (0, pad_to - len(subgraph_indices)),
+  #       'constant',
+  #       constant_values=_SUBGRAPH_PADDING_VALUE)
+    # print(subgraphs[batch.input_id])
+    # raise RuntimeError("Pause for now ...")
+
   num_nodes = jax.tree_util.tree_leaves(graph.nodes)[0].shape[0]
   outgoing_edges = {u: [] for u in range(num_nodes)}
   for sender, receiver in zip(graph.senders, graph.receivers):
@@ -83,6 +107,7 @@ def get_subgraphs(graph,
         subgraph_indices, (0, pad_to - len(subgraph_indices)),
         'constant',
         constant_values=_SUBGRAPH_PADDING_VALUE)
+
   return jnp.asarray(subgraphs)
 
 
@@ -150,7 +175,8 @@ def compute_updates(state, graph,
     logits = logits[node_indices]
     labels = labels[node_indices]
     return compute_loss(logits, labels)
-  return jax.grad(loss_fn)(state.params, graph, labels, node_indices)
+  grads = jax.grad(loss_fn)(state.params, graph, labels, node_indices)
+  return jax.tree_map(lambda grad: grad / grad.shape[0], grads)
 
 
 @jax.jit
@@ -333,12 +359,17 @@ def create_optimizer(
     subgraphs,
     estimation_indices,
     rng,
+    wandb_logging,
 ):
   """Creates the optimizer."""
+  # TODO: single clipping threshold
   if config.differentially_private_training:
-    l2_norms_threshold = estimate_clipping_thresholds(
-        apply_fn, params, config.l2_norm_clip_percentile, graph, labels,
-        subgraphs, estimation_indices, config.adjacency_normalization)
+    if config.l2_norm_threshold is not None and config.l2_norm_threshold != 0:
+      l2_norms_threshold = jax.tree_map(lambda layer: np.array(config.l2_norm_threshold), params)
+    else:
+      l2_norms_threshold = estimate_clipping_thresholds(
+          apply_fn, params, config.l2_norm_clip_percentile, graph, labels,
+          subgraphs, estimation_indices, config.adjacency_normalization)
     base_sensitivity = compute_base_sensitivity(config)
     privacy_params = {
         'l2_norms_threshold': l2_norms_threshold,
@@ -349,8 +380,9 @@ def create_optimizer(
     
     sigmas = optimizers.compute_opt_noise(l2_norms_threshold, base_sensitivity, 
                                           config.training_noise_multiplier)
-    wandb.config.clipping_thresholds = tree_flatten_1dim(l2_norms_threshold)
-    wandb.config.sigmas = tree_flatten_1dim(sigmas)
+    if wandb_logging:
+      wandb.config.clipping_thresholds = tree_flatten_1dim(l2_norms_threshold)
+      wandb.config.sigmas = tree_flatten_1dim(sigmas)
 
   if config.optimizer == 'sgd':
     opt_params = {
@@ -391,13 +423,14 @@ def create_train_state(
     labels,
     subgraphs,
     estimation_indices,
+    wandb_logging,
 ):
   """Creates initial `TrainState`."""
   model_rng, opt_rng = jax.random.split(rng)
   model, params = create_model(config, graph, model_rng)
   apply_fn = jax.jit(model.apply)
   tx = create_optimizer(apply_fn, params, config, graph, labels, subgraphs,
-                        estimation_indices, opt_rng)
+                        estimation_indices, opt_rng, wandb_logging)
   return train_state.TrainState.create(
       apply_fn=apply_fn, params=params, tx=tx)
 
@@ -431,6 +464,7 @@ def compute_metrics(logits, labels,
 def log_metrics(step, metrics,
                 adam_summary_stats,
                 summary_writer, 
+                wandb_logging,
                 postfix = ''):
   """Logs all metrics."""
   # Formatting for accuracy.
@@ -444,7 +478,8 @@ def log_metrics(step, metrics,
   }
 
   # Log metrics to WandB
-  wandb.log({**metrics, **adam_summary_stats})
+  if wandb_logging:
+    wandb.log({**metrics, **adam_summary_stats})
 
 
 def get_estimation_indices(
@@ -471,7 +506,10 @@ def train_and_evaluate(config,
   rng = jax.random.PRNGKey(config.rng_seed)
 
   # Set up logging.
-  wandb.init(project=config.wandb_project, config=dict(config), name=config.experiment_name, group=config.group)
+  wandb_logging = False
+  if config.wandb_project is not None:
+    wandb_logging = True
+    wandb.init(project=config.wandb_project, config=dict(config), name=config.experiment_name, group=config.group)
   summary_writer = metric_writers.create_default_writer(workdir)
   summary_writer.write_hparams(dict(config))
 
@@ -498,7 +536,19 @@ def train_and_evaluate(config,
     train_subgraphs = subgraphs[train_indices]
     del subgraphs
   else:
-    train_subgraphs = None
+    # TEMP ============================
+    graph = jax.tree_map(np.asarray, graph)
+    subgraphs = get_subgraphs(
+        graph, pad_to=config.pad_subgraphs_to)
+    graph = jax.tree_map(jnp.asarray, graph)
+
+    # We only need the subgraphs for training nodes.
+    train_subgraphs = subgraphs[train_indices]
+    del subgraphs
+    # TEMP ============================
+    # train_subgraphs = None
+
+  logging.info('sampled subgraphs')
 
   # Initialize privacy accountant.
   training_privacy_accountant = privacy_accountants.get_training_privacy_accountant(
@@ -508,14 +558,14 @@ def train_and_evaluate(config,
   rng, init_rng = jax.random.split(rng)
   estimation_indices = get_estimation_indices(train_indices, config)
   state = create_train_state(init_rng, config, graph, train_labels,
-                             train_subgraphs, estimation_indices)
+                             train_subgraphs, estimation_indices, wandb_logging)
 
   # Set up checkpointing of the model.
   checkpoint_dir = os.path.join(workdir, 'checkpoints')
   ckpt = checkpoint.Checkpoint(checkpoint_dir, max_to_keep=2)
   state = ckpt.restore_or_initialize(state)
   # Get optimizer Adam summary stats
-  if config.optimizer == 'sgd':
+  if config.optimizer == 'sgd' or not config.differentially_private_training:
     adam_summary_stats = {}
   else:
     adam_summary_stats = state.opt_state[1][0].summary_stats
@@ -528,8 +578,9 @@ def train_and_evaluate(config,
   logits = compute_logits(state, graph)
   metrics_after_init = compute_metrics(logits, labels, masks)
   metrics_after_init['epsilon'] = 0
+  accuracy = metrics_after_init['test_accuracy']
   log_metrics(
-      0, metrics_after_init, adam_summary_stats, summary_writer, postfix='')
+      0, metrics_after_init, adam_summary_stats, summary_writer, wandb_logging, postfix='')
 
   # Train model.
   rng, train_rng = jax.random.split(rng)
@@ -556,12 +607,23 @@ def train_and_evaluate(config,
                                        train_subgraphs, indices,
                                        config.adjacency_normalization)
       else:
-        grads = compute_updates(state, graph, train_labels, indices)
+        # TEMP ============================
+        # with jax.disable_jit():
+        grads = compute_updates_for_dp(state, graph, train_labels,
+                                      train_subgraphs, indices,
+                                      config.adjacency_normalization)
+        grads = jax.tree_map(lambda g: jnp.sum(g, axis=0), grads)
+        # print("GRAD")
+        # grads_flat, _ = jax.tree_util.tree_flatten(grads)
+        # for grad in grads_flat:
+        #   print(grad.shape)
+        # TEMP ============================
+        # grads = compute_updates(state, graph, train_labels, indices)
 
       # Update parameters.
       state = update_model(state, grads)
       # Get Adam optimizer summary stats
-      if config.optimizer == 'sgd':
+      if config.optimizer == 'sgd' or not config.differentially_private_training:
         adam_summary_stats = {}
       else:
         adam_summary_stats = state.opt_state[1][0].summary_stats
@@ -585,11 +647,13 @@ def train_and_evaluate(config,
         logits = compute_logits(state, graph)
         metrics_during_training = compute_metrics(logits, labels, masks)
         metrics_during_training['epsilon'] = training_epsilon
+        accuracy = metrics_during_training['test_accuracy']
         log_metrics(
             step,
             metrics_during_training,
             adam_summary_stats, 
-            summary_writer)
+            summary_writer,
+            wandb_logging)
 
     # Checkpoint, if required.
     if step % config.checkpoint_every_steps == 0 or is_last_step:
@@ -597,8 +661,11 @@ def train_and_evaluate(config,
         ckpt.save(state)
 
     # Resample, if required.
-    if step % config.resample_every_steps == 0:
+    if config.resample_every_steps != 0 and (step+1) % config.resample_every_steps == 0:
+      logging.info('resampling graph...')
+      base_graph = input_pipeline.load_graph(config)
       old_num_training_nodes = num_training_nodes
+      rng, dataset_rng = jax.random.split(rng)
       dataset = input_pipeline.get_dataset(base_graph, config, dataset_rng)
       graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
       labels = jax.nn.one_hot(labels, config.num_classes)
@@ -606,11 +673,35 @@ def train_and_evaluate(config,
       train_indices = jnp.where(train_mask)[0]
       train_labels = labels[train_indices]
       num_training_nodes = len(train_indices)
+      # Get subgraphs.
+      if config.differentially_private_training:
+        graph = jax.tree_map(np.asarray, graph)
+        subgraphs = get_subgraphs(
+            graph, pad_to=config.pad_subgraphs_to)
+        graph = jax.tree_map(jnp.asarray, graph)
+
+        # We only need the subgraphs for training nodes.
+        train_subgraphs = subgraphs[train_indices]
+        del subgraphs
+      else:
+        # TEMP ============================
+        graph = jax.tree_map(np.asarray, graph)
+        subgraphs = get_subgraphs(
+            graph, pad_to=config.pad_subgraphs_to)
+        graph = jax.tree_map(jnp.asarray, graph)
+
+        # We only need the subgraphs for training nodes.
+        train_subgraphs = subgraphs[train_indices]
+        del subgraphs
+        # TEMP ============================
+        # train_subgraphs = None
       logging.info('resampling graph: node change %d -> %d, orginal graph has %d nodes', 
                    old_num_training_nodes, num_training_nodes, np.shape(base_graph.node_features)[0])
 
+  if wandb_logging:
+    wandb.finish()
 
-  return state
+  return accuracy
 
 
 

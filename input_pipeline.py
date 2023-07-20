@@ -69,7 +69,8 @@ def mask_to_index(mask):
 
 
 def sample_edgelists(graph, K, rng):
-  graph = copy.copy(graph)
+  rand_gen = np.random.default_rng(int(rng[0]))
+  # graph = copy.copy(graph)
   x, y, senders, receivers = graph.node_features, graph.node_labels, graph.senders, graph.receivers
   n = np.shape(x)[0]
   train_mask = index_to_mask(n, graph.train_nodes)
@@ -81,8 +82,8 @@ def sample_edgelists(graph, K, rng):
   out_degrees = A.sum(axis=1) + eps
   # sample out edges
   p = K / (2*out_degrees[senders])
-  mask = np.random.rand(np.shape(p)[0], ) < p
-  mask = np.logical_or(mask, ~train_edge_mask) # only sample not train edges!
+  mask = rand_gen.random(np.shape(p)[0]) < p
+  mask = np.logical_or(mask, ~train_edge_mask) # only do sampling on train edges!
   sampled_senders, sampled_receivers = senders[mask], receivers[mask]
   # check that no nodes have more in-degree than K
   A = get_adjacency_matrix(sampled_senders, sampled_receivers, n)
@@ -101,8 +102,10 @@ def sample_edgelists(graph, K, rng):
 def subsample_graph(graph, max_degree,
                     rng):
   """Subsamples the undirected input graph and returns a copy of the graph."""
+  print("SAMPLING EDGELISTS")
   graph = sample_edgelists(graph, max_degree, rng)
-  
+  print("FINISHED!")
+
   # edges = sampler.get_adjacency_lists(graph)
   # edges = sampler.sample_adjacency_lists(edges, graph.train_nodes, max_degree, rng)
   # senders = []
@@ -160,7 +163,7 @@ def add_self_loops(graph):
       n_edge=np.asarray([senders.shape[0]]))
 
 
-def load_graph(config): # TODO: pass rng to sampler!
+def load_graph(config):
   """Load graph dataset."""
   graph = dataset_readers.get_dataset(config.dataset, config.dataset_path)
   graph = add_reverse_edges(graph)
@@ -175,4 +178,5 @@ def get_dataset(graph, config, rng):
   graph = add_self_loops(graph)
   graph = normalizations.normalize_edges_with_mask(
       graph, mask=None, adjacency_normalization=config.adjacency_normalization)
+  print("FINISHED DATASET LOADING")
   return graph, labels, masks
