@@ -76,19 +76,12 @@ def get_subgraphs(graph,
   # edge_index = np.stack((graph.senders, graph.receivers))
   # data = Data(x=from_numpy(nodes), edge_index=from_numpy(edge_index))
   # # print(data.edge_index)
-  # loader = NeighborLoader(data, num_neighbors=[-1], batch_size=1)
+  # return NeighborLoader(data, num_neighbors=[-1], batch_size=1)
   # print("GETTING SUBGRAPHS")
 
-  # subgraphs = np.zeros((len(loader), pad_to), dtype=np.int32)
-  # for batch in iter(loader):
-  #   print(batch.input_id)
-  #   subgraph_indices = np.asarray(batch.n_id)[:pad_to]
-  #   subgraphs[batch.input_id] = np.pad(
-  #       subgraph_indices, (0, pad_to - len(subgraph_indices)),
-  #       'constant',
-  #       constant_values=_SUBGRAPH_PADDING_VALUE)
-    # print(subgraphs[batch.input_id])
-    # raise RuntimeError("Pause for now ...")
+  # print(loader.collate_fn([0]))
+  # print(loader.collate_fn([10]))
+  # raise RuntimeError("Pause for now ...")
 
   num_nodes = jax.tree_util.tree_leaves(graph.nodes)[0].shape[0]
   outgoing_edges = {u: [] for u in range(num_nodes)}
