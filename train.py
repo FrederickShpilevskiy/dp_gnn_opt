@@ -65,23 +65,23 @@ def compute_loss(logits,
   return loss
 
 
+def get_dataloader(graph, train_indices):
+  """Returns a PyTorch DataLoader object."""
+  from torch_geometric.loader import NeighborLoader
+  from torch_geometric.data import Data
+  from torch import from_numpy
+  # print(graph)
+  nodes = np.array(graph.nodes)
+  train_nodes = np.array(train_indices)
+  edge_index = np.stack((graph.senders, graph.receivers))
+  data = Data(x=from_numpy(nodes), edge_index=from_numpy(edge_index))
+  # print(data.edge_index)
+  return NeighborLoader(data, num_neighbors=[-1], batch_size=1, input_nodes=from_numpy(train_nodes))
+
+
 def get_subgraphs(graph,
                   pad_to):
   """Creates an array of padded subgraphs."""
-  # from torch_geometric.loader import NeighborLoader
-  # from torch_geometric.data import Data
-  # from torch import from_numpy
-  # # print(graph)
-  # nodes = np.array(graph.nodes)
-  # edge_index = np.stack((graph.senders, graph.receivers))
-  # data = Data(x=from_numpy(nodes), edge_index=from_numpy(edge_index))
-  # # print(data.edge_index)
-  # return NeighborLoader(data, num_neighbors=[-1], batch_size=1)
-  # print("GETTING SUBGRAPHS")
-
-  # print(loader.collate_fn([0]))
-  # print(loader.collate_fn([10]))
-  # raise RuntimeError("Pause for now ...")
 
   num_nodes = jax.tree_util.tree_leaves(graph.nodes)[0].shape[0]
   outgoing_edges = {u: [] for u in range(num_nodes)}
@@ -192,6 +192,7 @@ def compute_updates_for_dp(state,
                            node_indices,
                            adjacency_normalization):
   """Computes gradients for a single batch for differentially private training."""
+  
 
   def subgraph_loss(params, graph,
                     node_labels,
@@ -208,7 +209,8 @@ def compute_updates_for_dp(state,
 
   # Reshape leading axes for multiple devices.
   node_labels = reshape_before_pmap(labels[node_indices])
-  subgraph_indices = reshape_before_pmap(subgraphs[node_indices])
+  # TODO: figure out how to deal with subgraphs
+  subgraph_indices = reshape_before_pmap(subgraphs)
 
   # Compute per-example gradients.
   per_example_gradient_fn = jax.vmap(
@@ -519,27 +521,9 @@ def train_and_evaluate(config,
   num_training_nodes = len(train_indices)
 
   # Get subgraphs.
-  if config.differentially_private_training:
-    graph = jax.tree_map(np.asarray, graph)
-    subgraphs = get_subgraphs(
-        graph, pad_to=config.pad_subgraphs_to)
-    graph = jax.tree_map(jnp.asarray, graph)
-
-    # We only need the subgraphs for training nodes.
-    train_subgraphs = subgraphs[train_indices]
-    del subgraphs
-  else:
-    # TEMP ============================
-    graph = jax.tree_map(np.asarray, graph)
-    subgraphs = get_subgraphs(
-        graph, pad_to=config.pad_subgraphs_to)
-    graph = jax.tree_map(jnp.asarray, graph)
-
-    # We only need the subgraphs for training nodes.
-    train_subgraphs = subgraphs[train_indices]
-    del subgraphs
-    # TEMP ============================
-    # train_subgraphs = None
+  graph = jax.tree_map(np.asarray, graph)
+  train_loader = get_dataloader(graph, train_indices)
+  graph = jax.tree_map(jnp.asarray, graph)
 
   logging.info('sampled subgraphs')
 
@@ -550,8 +534,9 @@ def train_and_evaluate(config,
   # Construct and initialize model.
   rng, init_rng = jax.random.split(rng)
   estimation_indices = get_estimation_indices(train_indices, config)
+  # TODO: this wants subgraphs to use percentile estimation (no more subgraphs though!)
   state = create_train_state(init_rng, config, graph, train_labels,
-                             train_subgraphs, estimation_indices, wandb_logging)
+                             None, estimation_indices, wandb_logging)
 
   # Set up checkpointing of the model.
   checkpoint_dir = os.path.join(workdir, 'checkpoints')
@@ -594,24 +579,27 @@ def train_and_evaluate(config,
       indices = jax.random.choice(step_rng, num_training_nodes,
                                   (config.batch_size,))
 
+      pad_to = config.pad_subgraphs_to  
+      subgraphs = np.zeros((len(indices), pad_to), dtype=np.int32)
+      print("GETTING SUBGRAPH")
+      print(loader.collate_fn(indices))
+      raise RuntimeError("Pause for now ...")
+      for batch in iter(loader):
+        subgraph_indices = np.asarray(batch.n_id)[:pad_to]
+        subgraphs[batch.input_id] = np.pad(
+            subgraph_indices, (0, pad_to - len(subgraph_indices)),
+            'constant',
+            constant_values=_SUBGRAPH_PADDING_VALUE)
+        print(subgraphs[batch.input_id])
+        raise RuntimeError("Pause for now ...")
+      subgraphs = jnp.asarray(subgraphs)
       # Compute gradients.
-      if config.differentially_private_training:
-        grads = compute_updates_for_dp(state, graph, train_labels,
-                                       train_subgraphs, indices,
-                                       config.adjacency_normalization)
-      else:
-        # TEMP ============================
-        # with jax.disable_jit():
-        grads = compute_updates_for_dp(state, graph, train_labels,
-                                      train_subgraphs, indices,
-                                      config.adjacency_normalization)
+      grads = compute_updates_for_dp(state, graph, train_labels,
+                                     subgraphs, indices,
+                                     config.adjacency_normalization)
+      del subgraphs
+      if not config.differentially_private_training:
         grads = jax.tree_map(lambda g: jnp.sum(g, axis=0), grads)
-        # print("GRAD")
-        # grads_flat, _ = jax.tree_util.tree_flatten(grads)
-        # for grad in grads_flat:
-        #   print(grad.shape)
-        # TEMP ============================
-        # grads = compute_updates(state, graph, train_labels, indices)
 
       # Update parameters.
       state = update_model(state, grads)
@@ -667,27 +655,9 @@ def train_and_evaluate(config,
       train_labels = labels[train_indices]
       num_training_nodes = len(train_indices)
       # Get subgraphs.
-      if config.differentially_private_training:
-        graph = jax.tree_map(np.asarray, graph)
-        subgraphs = get_subgraphs(
-            graph, pad_to=config.pad_subgraphs_to)
-        graph = jax.tree_map(jnp.asarray, graph)
-
-        # We only need the subgraphs for training nodes.
-        train_subgraphs = subgraphs[train_indices]
-        del subgraphs
-      else:
-        # TEMP ============================
-        graph = jax.tree_map(np.asarray, graph)
-        subgraphs = get_subgraphs(
-            graph, pad_to=config.pad_subgraphs_to)
-        graph = jax.tree_map(jnp.asarray, graph)
-
-        # We only need the subgraphs for training nodes.
-        train_subgraphs = subgraphs[train_indices]
-        del subgraphs
-        # TEMP ============================
-        # train_subgraphs = None
+      graph = jax.tree_map(np.asarray, graph)
+      train_loader = get_dataloader(graph)
+      graph = jax.tree_map(jnp.asarray, graph)
       logging.info('resampling graph: node change %d -> %d, orginal graph has %d nodes', 
                    old_num_training_nodes, num_training_nodes, np.shape(base_graph.node_features)[0])
 
