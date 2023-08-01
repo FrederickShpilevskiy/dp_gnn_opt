@@ -47,8 +47,8 @@ def get_config():
   config.max_degree = 7
   config.differentially_private_training = True
   config.num_estimation_samples = 10000
-  config.l2_norm_clip_percentile = 75
-  config.l2_norm_threshold = 0.
+  config.l2_norm_clip_percentile = -1
+  config.l2_norm_threshold = 0.00001
   config.training_noise_multiplier = 2.
   config.num_training_steps = 10000
   config.max_training_epsilon = 12

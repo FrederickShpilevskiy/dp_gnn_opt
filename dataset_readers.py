@@ -271,7 +271,6 @@ class GraphSAINTTransductiveDataset(Dataset):
       from torch_geometric.datasets import Reddit
       from torch_geometric.utils import mask_to_index
       data = Reddit(root='./datasets/reddit')[0]
-      print(data)
       self.senders = data.edge_index[0, :].numpy()
       self.receivers = data.edge_index[1, :].numpy()
       self.node_features = data.x.numpy()

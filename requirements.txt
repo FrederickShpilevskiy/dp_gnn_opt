@@ -12,3 +12,4 @@ wandb
 clu
 jraph
 torch_geometric
+optuna

@@ -68,21 +68,6 @@ def compute_loss(logits,
 def get_subgraphs(graph,
                   pad_to):
   """Creates an array of padded subgraphs."""
-  # from torch_geometric.loader import NeighborLoader
-  # from torch_geometric.data import Data
-  # from torch import from_numpy
-  # # print(graph)
-  # nodes = np.array(graph.nodes)
-  # edge_index = np.stack((graph.senders, graph.receivers))
-  # data = Data(x=from_numpy(nodes), edge_index=from_numpy(edge_index))
-  # # print(data.edge_index)
-  # return NeighborLoader(data, num_neighbors=[-1], batch_size=1)
-  # print("GETTING SUBGRAPHS")
-
-  # print(loader.collate_fn([0]))
-  # print(loader.collate_fn([10]))
-  # raise RuntimeError("Pause for now ...")
-
   num_nodes = jax.tree_util.tree_leaves(graph.nodes)[0].shape[0]
   outgoing_edges = {u: [] for u in range(num_nodes)}
   for sender, receiver in zip(graph.senders, graph.receivers):
@@ -101,7 +86,7 @@ def get_subgraphs(graph,
         'constant',
         constant_values=_SUBGRAPH_PADDING_VALUE)
 
-  return jnp.asarray(subgraphs)
+  return subgraphs
 
 
 @functools.partial(
@@ -208,7 +193,7 @@ def compute_updates_for_dp(state,
 
   # Reshape leading axes for multiple devices.
   node_labels = reshape_before_pmap(labels[node_indices])
-  subgraph_indices = reshape_before_pmap(subgraphs[node_indices])
+  subgraph_indices = reshape_before_pmap(subgraphs)
 
   # Compute per-example gradients.
   per_example_gradient_fn = jax.vmap(
@@ -260,8 +245,14 @@ def estimate_clipping_thresholds(
   """Estimates gradient clipping thresholds."""
   dummy_state = train_state.TrainState.create(
       apply_fn=apply_fn, params=params, tx=optax.identity())
-  grads = compute_updates_for_dp(dummy_state, graph, labels, subgraphs,
+  # ========
+  estimation_subgraphs = jnp.asarray(subgraphs[estimation_indices])
+  # ========
+  grads = compute_updates_for_dp(dummy_state, graph, labels, estimation_subgraphs,
                                  estimation_indices, adjacency_normalization)
+  # ========
+  del estimation_subgraphs
+  # ========
   grad_norms = jax.tree_map(jax.vmap(jnp.linalg.norm), grads)
   get_percentile = lambda norms: jnp.percentile(norms, l2_norm_clip_percentile)
   l2_norms_threshold = jax.tree_map(get_percentile, grad_norms)
@@ -288,7 +279,11 @@ def create_model(config, graph,
         activation=getattr(nn, config.activation_fn))
   else:
     raise ValueError(f'Unsupported model: {config.model}.')
-  params = model.init(rng, graph)
+  print("initializing...")
+  # This uses the rest of the memory
+  # TODO: this uses too much memory
+  params = jax.jit(model.init)(rng, graph)
+  print("initialized")
   return model, params
 
 
@@ -376,6 +371,8 @@ def create_optimizer(
     if wandb_logging:
       wandb.config.clipping_thresholds = tree_flatten_1dim(l2_norms_threshold)
       wandb.config.sigmas = tree_flatten_1dim(sigmas)
+
+  print("Got clipping thresholds")
 
   if config.optimizer == 'sgd':
     opt_params = {
@@ -495,6 +492,8 @@ def train_and_evaluate(config,
   Returns:
     The train state (which includes the `.params`).
   """
+  # Clear GPU memory
+  gc.collect()
   # Seed for reproducibility.
   rng = jax.random.PRNGKey(config.rng_seed)
 
@@ -511,19 +510,25 @@ def train_and_evaluate(config,
   base_graph = input_pipeline.load_graph(config)
   # Get datasets.
   dataset = input_pipeline.get_dataset(base_graph, config, dataset_rng)
-  graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
-  labels = jax.nn.one_hot(labels, config.num_classes)
+  graph, labels, masks = dataset
+  # graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
+  oh_labels = np.zeros((len(labels), config.num_classes))
+  oh_labels[np.arange(len(labels)), labels] = 1
+  labels = oh_labels
+  # labels = jax.nn.one_hot(labels, config.num_classes)
   train_mask = masks['train']
-  train_indices = jnp.where(train_mask)[0]
+  # train_indices = jnp.where(train_mask)[0]
+  train_indices = np.where(train_mask)[0]
   train_labels = labels[train_indices]
   num_training_nodes = len(train_indices)
 
+  gc.collect()
+
   # Get subgraphs.
   if config.differentially_private_training:
-    graph = jax.tree_map(np.asarray, graph)
+    print("Getting subgraphs")
     subgraphs = get_subgraphs(
         graph, pad_to=config.pad_subgraphs_to)
-    graph = jax.tree_map(jnp.asarray, graph)
 
     # We only need the subgraphs for training nodes.
     train_subgraphs = subgraphs[train_indices]
@@ -541,17 +546,23 @@ def train_and_evaluate(config,
     # TEMP ============================
     # train_subgraphs = None
 
-  logging.info('sampled subgraphs')
+  print('sampled subgraphs')
 
   # Initialize privacy accountant.
   training_privacy_accountant = privacy_accountants.get_training_privacy_accountant(
       config, num_training_nodes, compute_max_terms_per_node(config))
+
+  print('created accountant')
 
   # Construct and initialize model.
   rng, init_rng = jax.random.split(rng)
   estimation_indices = get_estimation_indices(train_indices, config)
   state = create_train_state(init_rng, config, graph, train_labels,
                              train_subgraphs, estimation_indices, wandb_logging)
+
+  gc.collect()
+
+  print('initialized model (etc.)')
 
   # Set up checkpointing of the model.
   checkpoint_dir = os.path.join(workdir, 'checkpoints')
@@ -594,16 +605,18 @@ def train_and_evaluate(config,
       indices = jax.random.choice(step_rng, num_training_nodes,
                                   (config.batch_size,))
 
+      subgraphs = jnp.asarray(train_subgraphs[indices])
+
       # Compute gradients.
       if config.differentially_private_training:
         grads = compute_updates_for_dp(state, graph, train_labels,
-                                       train_subgraphs, indices,
+                                       subgraphs, indices,
                                        config.adjacency_normalization)
       else:
         # TEMP ============================
         # with jax.disable_jit():
         grads = compute_updates_for_dp(state, graph, train_labels,
-                                      train_subgraphs, indices,
+                                      subgraphs, indices,
                                       config.adjacency_normalization)
         grads = jax.tree_map(lambda g: jnp.sum(g, axis=0), grads)
         # print("GRAD")
@@ -612,6 +625,8 @@ def train_and_evaluate(config,
         #   print(grad.shape)
         # TEMP ============================
         # grads = compute_updates(state, graph, train_labels, indices)
+
+      del subgraphs
 
       # Update parameters.
       state = update_model(state, grads)
@@ -650,6 +665,7 @@ def train_and_evaluate(config,
 
     # Checkpoint, if required.
     if step % config.checkpoint_every_steps == 0 or is_last_step:
+      print("checkpoint", int(step / config.checkpoint_every_steps))
       with report_progress.timed('checkpoint'):
         ckpt.save(state)
 
@@ -693,6 +709,10 @@ def train_and_evaluate(config,
 
   if wandb_logging:
     wandb.finish()
+
+  # backend = jax.lib.xla_bridge.get_backend()
+  # for buf in backend.live_buffers(): buf.delete()
+  gc.collect()
 
   return accuracy
 
