@@ -549,6 +549,7 @@ def train_and_evaluate(config,
   print('sampled subgraphs')
 
   # Initialize privacy accountant.
+  print(num_training_nodes, compute_max_terms_per_node(config))
   training_privacy_accountant = privacy_accountants.get_training_privacy_accountant(
       config, num_training_nodes, compute_max_terms_per_node(config))
 
@@ -665,7 +666,7 @@ def train_and_evaluate(config,
 
     # Checkpoint, if required.
     if step % config.checkpoint_every_steps == 0 or is_last_step:
-      print("checkpoint", int(step / config.checkpoint_every_steps))
+      print("checkpoint", int(step / config.checkpoint_every_steps), end="\r")
       with report_progress.timed('checkpoint'):
         ckpt.save(state)
 
@@ -706,6 +707,8 @@ def train_and_evaluate(config,
         # train_subgraphs = None
       logging.info('resampling graph: node change %d -> %d, orginal graph has %d nodes', 
                    old_num_training_nodes, num_training_nodes, np.shape(base_graph.node_features)[0])
+
+  print("done training")
 
   if wandb_logging:
     wandb.finish()

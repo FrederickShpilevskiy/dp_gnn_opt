@@ -68,7 +68,7 @@ class OneHopGraphConvolution(nn.Module):
   """Performs one hop of a graph convolution with weighted edges."""
 
   update_fn: Callable[[chex.Array], chex.Array]
-  num_partitions: int = 10
+  num_partitions: int = 1
 
   @nn.compact
   def __call__(self, graph):
