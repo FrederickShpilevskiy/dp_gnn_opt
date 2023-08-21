@@ -73,6 +73,7 @@ def sample_edgelists(graph, K, rng):
   # graph = copy.copy(graph)
   x, y, senders, receivers = graph.node_features, graph.node_labels, graph.senders, graph.receivers
   n = np.shape(x)[0]
+  print('num train_nodes', len(graph.train_nodes))
   train_mask = index_to_mask(n, graph.train_nodes)
   # only sample train edges
   train_edge_mask = train_mask[senders]
@@ -88,15 +89,22 @@ def sample_edgelists(graph, K, rng):
   # check that no nodes have more in-degree than K
   A = get_adjacency_matrix(sampled_senders, sampled_receivers, n)
   out_degrees = A.sum(axis=1)
-  mask = out_degrees <= K
-  mask = np.logical_or(mask, ~train_mask) # only remove train nodes
-  # filter x, y, and edge_index according to nodes with out-degree 
-  # greater than K
-  graph.train_nodes = mask_to_index(train_mask[mask])
-  graph.validation_nodes = mask_to_index(index_to_mask(n, graph.validation_nodes)[mask])
-  graph.test_nodes = mask_to_index(index_to_mask(n, graph.test_nodes)[mask])
-  graph.node_features, graph.node_labels = x[mask], y[mask]
-  graph.senders, graph.receivers = filter_edge_index(sampled_senders, sampled_receivers, mask)
+  node_mask = out_degrees <= K
+  node_mask = np.logical_or(node_mask, ~train_mask) # only remove train nodes
+  print('dropped count', len(np.where(node_mask == False)[0]))
+  # filter out senders (edges) with out-degree greater than K
+  mask = node_mask[sampled_senders]
+  sampled_senders, sampled_receivers = sampled_senders[mask], sampled_receivers[mask]
+  # save sampled edges
+  graph.senders, graph.receivers = sampled_senders, sampled_receivers
+
+  # NOTE: WE DON'T NEED TO SAMPLE THE NODES, JUST EDGES
+  # graph.train_nodes = mask_to_index(train_mask[mask])
+  # graph.validation_nodes = mask_to_index(index_to_mask(n, graph.validation_nodes)[mask])
+  # graph.test_nodes = mask_to_index(index_to_mask(n, graph.test_nodes)[mask])
+  # graph.node_features, graph.node_labels = x[mask], y[mask]
+  # graph.senders, graph.receivers = filter_edge_index(sampled_senders, sampled_receivers, mask)
+
   return graph
 
 def subsample_graph(graph, max_degree,
@@ -106,6 +114,7 @@ def subsample_graph(graph, max_degree,
   graph = sample_edgelists(graph, max_degree, rng)
   print("FINISHED!")
 
+  # print("SAMPLING EDGELISTS")
   # edges = sampler.get_adjacency_lists(graph)
   # edges = sampler.sample_adjacency_lists(edges, graph.train_nodes, max_degree, rng)
   # senders = []
@@ -117,6 +126,7 @@ def subsample_graph(graph, max_degree,
 
   # graph.senders = senders
   # graph.receivers = receivers
+  # print("FINISHED!")
   return graph
 
 

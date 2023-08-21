@@ -510,15 +510,15 @@ def train_and_evaluate(config,
   base_graph = input_pipeline.load_graph(config)
   # Get datasets.
   dataset = input_pipeline.get_dataset(base_graph, config, dataset_rng)
-  graph, labels, masks = dataset
-  # graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
-  oh_labels = np.zeros((len(labels), config.num_classes))
-  oh_labels[np.arange(len(labels)), labels] = 1
-  labels = oh_labels
-  # labels = jax.nn.one_hot(labels, config.num_classes)
+  # graph, labels, masks = dataset
+  graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
+  # oh_labels = np.zeros((len(labels), config.num_classes))
+  # oh_labels[np.arange(len(labels)), labels] = 1
+  # labels = oh_labels
+  labels = jax.nn.one_hot(labels, config.num_classes)
   train_mask = masks['train']
-  # train_indices = jnp.where(train_mask)[0]
-  train_indices = np.where(train_mask)[0]
+  train_indices = jnp.where(train_mask)[0]
+  # train_indices = np.where(train_mask)[0]
   train_labels = labels[train_indices]
   num_training_nodes = len(train_indices)
 
@@ -527,8 +527,10 @@ def train_and_evaluate(config,
   # Get subgraphs.
   if config.differentially_private_training:
     print("Getting subgraphs")
+    graph = jax.tree_map(np.asarray, graph)
     subgraphs = get_subgraphs(
         graph, pad_to=config.pad_subgraphs_to)
+    graph = jax.tree_map(jnp.asarray, graph)
 
     # We only need the subgraphs for training nodes.
     train_subgraphs = subgraphs[train_indices]
