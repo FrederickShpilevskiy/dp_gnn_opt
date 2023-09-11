@@ -19,20 +19,25 @@ from typing import Any
 import ml_collections
 
 
+def get_hyper(hyper):
+  """Defines the hyperparameter sweeps."""
+  return hyper.product(
+      [hyper.sweep('config.training_noise_multiplier', [0.5, 1., 2., 4.])])
+
+
 def get_config():
   """Get the default hyperparameter configuration."""
   config = ml_collections.ConfigDict()
 
   config.dataset = 'ogbn-arxiv-disjoint'
   config.dataset_path = 'datasets/'
-  config.wandb_project = 'dp-gnn-extension'
-  config.experiment_name = 'dpgcn_baseline'
-  config.group = 'gat_baseline'
+  config.wandb_project = 'gnn_adam_corr-v2'
+  config.experiment_name = 'baseline'
   config.pad_subgraphs_to = 100
   config.multilabel = False
   config.adjacency_normalization = 'inverse-degree'
   config.model = 'gcn'
-  config.latent_size = 255
+  config.latent_size = 100
   config.num_encoder_layers = 1
   config.num_message_passing_steps = 1
   config.num_decoder_layers = 2
@@ -42,20 +47,17 @@ def get_config():
   config.differentially_private_training = True
   config.num_estimation_samples = 10000
   config.l2_norm_clip_percentile = 75
-  config.l2_norm_threshold = 0.
   config.training_noise_multiplier = 2.
-  config.num_training_steps = 10000
+  config.num_training_steps = 3000
   config.max_training_epsilon = 12
-  config.evaluate_every_steps = 10
-  config.resample_every_steps = 0
+  config.evaluate_every_steps = 50
   config.checkpoint_every_steps = 50
-  config.rng_seed = 86583
-  config.optimizer = 'adam'
+  config.rng_seed = 0
+  config.optimizer = 'sgd'
   config.learning_rate = 3e-3
-  config.momentum = 0.
-  config.nesterov = False
-  config.eps_root = 0.1
-  config.b1 = 0.9
-  config.eps = 1e-12
+  if config.optimizer == 'sgd':
+    config.momentum = 0.
+    config.nesterov = False
+    config.learning_rate = 1.
   config.batch_size = 10000
   return config

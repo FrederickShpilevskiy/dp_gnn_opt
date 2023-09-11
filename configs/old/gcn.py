@@ -13,49 +13,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DP-GCN hyperparameter configuration."""
+"""GCN hyperparameter configuration."""
 
 from typing import Any
 import ml_collections
+
+
+def get_hyper(hyper):
+  """Defines the hyperparameter sweeps."""
+  return hyper.product([
+      hyper.sweep('config.num_encoder_layers', [1, 2]),
+      hyper.sweep('config.num_decoder_layers', [1, 2]),
+      hyper.sweep('config.learning_rate', [1e-3, 2e-3, 3e-3, 5e-3])
+  ])
 
 
 def get_config():
   """Get the default hyperparameter configuration."""
   config = ml_collections.ConfigDict()
 
-  config.dataset = 'ogbn-arxiv-disjoint'
+  config.dataset = 'ogbn-arxiv'
   config.dataset_path = 'datasets/'
-  config.wandb_project = 'dp-gnn-extension'
-  config.experiment_name = 'dpgcn_baseline'
-  config.group = 'gat_baseline'
-  config.pad_subgraphs_to = 100
   config.multilabel = False
   config.adjacency_normalization = 'inverse-degree'
   config.model = 'gcn'
-  config.latent_size = 255
-  config.num_encoder_layers = 1
+  config.latent_size = 256
+  config.num_encoder_layers = 2
   config.num_message_passing_steps = 1
   config.num_decoder_layers = 2
-  config.activation_fn = 'tanh'
+  config.activation_fn = 'relu'
   config.num_classes = 40
-  config.max_degree = 7
-  config.differentially_private_training = True
-  config.num_estimation_samples = 10000
-  config.l2_norm_clip_percentile = 75
-  config.l2_norm_threshold = 0.
-  config.training_noise_multiplier = 2.
-  config.num_training_steps = 10000
-  config.max_training_epsilon = 12
-  config.evaluate_every_steps = 10
-  config.resample_every_steps = 0
+  config.max_degree = 30
+  config.differentially_private_training = False
+  config.num_training_steps = 1000
+  config.evaluate_every_steps = 50
   config.checkpoint_every_steps = 50
-  config.rng_seed = 86583
+  config.rng_seed = 0
   config.optimizer = 'adam'
-  config.learning_rate = 3e-3
-  config.momentum = 0.
-  config.nesterov = False
-  config.eps_root = 0.1
-  config.b1 = 0.9
-  config.eps = 1e-12
-  config.batch_size = 10000
+  config.learning_rate = 0.002
+  config.batch_size = 1000
   return config

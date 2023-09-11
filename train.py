@@ -192,22 +192,25 @@ def compute_updates_for_dp(state,
     return compute_loss(node_preds, node_labels)
 
   # Reshape leading axes for multiple devices.
-  node_labels = reshape_before_pmap(labels[node_indices])
-  subgraph_indices = reshape_before_pmap(subgraphs)
+  node_labels = labels[node_indices]
+  subgraph_indices = subgraphs
+  # node_labels = reshape_before_pmap(labels[node_indices])
+  # subgraph_indices = reshape_before_pmap(subgraphs)
 
   # Compute per-example gradients.
   per_example_gradient_fn = jax.vmap(
       jax.grad(subgraph_loss), in_axes=(None, None, 0, 0))
-  per_example_gradient_fn = jax.pmap(
-      per_example_gradient_fn,
-      axis_name='devices',
-      in_axes=(None, None, 0, 0),
-      devices=jax.local_devices())
+  # per_example_gradient_fn = jax.pmap(
+  #     per_example_gradient_fn,
+  #     axis_name='devices',
+  #     in_axes=(None, None, 0, 0),
+  #     devices=jax.local_devices())
+  # jax.make_jaxpr(per_example_gradient_fn)(state.params, graph, node_labels, subgraph_indices)
   grads = per_example_gradient_fn(state.params, graph, node_labels,
                                   subgraph_indices)
 
   # Undo reshape.
-  grads = jax.tree_map(reshape_after_pmap, grads)
+  # grads = jax.tree_map(reshape_after_pmap, grads)
 
   # Normalize gradients by batch size.
   return jax.tree_map(lambda grad: grad / grad.shape[0], grads)
@@ -245,14 +248,10 @@ def estimate_clipping_thresholds(
   """Estimates gradient clipping thresholds."""
   dummy_state = train_state.TrainState.create(
       apply_fn=apply_fn, params=params, tx=optax.identity())
-  # ========
   estimation_subgraphs = jnp.asarray(subgraphs[estimation_indices])
-  # ========
   grads = compute_updates_for_dp(dummy_state, graph, labels, estimation_subgraphs,
                                  estimation_indices, adjacency_normalization)
-  # ========
   del estimation_subgraphs
-  # ========
   grad_norms = jax.tree_map(jax.vmap(jnp.linalg.norm), grads)
   get_percentile = lambda norms: jnp.percentile(norms, l2_norm_clip_percentile)
   l2_norms_threshold = jax.tree_map(get_percentile, grad_norms)
@@ -277,6 +276,15 @@ def create_model(config, graph,
         latent_size=config.latent_size,
         num_classes=config.num_classes,
         activation=getattr(nn, config.activation_fn))
+  elif config.model == 'gat':
+    model = models.GraphAttentionNetwork(
+        num_encoder_layers=config.num_encoder_layers,
+        num_decoder_layers=config.num_decoder_layers,
+        num_message_passing_steps=config.num_message_passing_steps,
+        latent_size=config.latent_size,
+        num_classes=config.num_classes,
+        activation=getattr(nn, config.activation_fn),
+        negative_slope=config.negative_slope)
   else:
     raise ValueError(f'Unsupported model: {config.model}.')
   print("initializing...")
@@ -562,8 +570,6 @@ def train_and_evaluate(config,
   estimation_indices = get_estimation_indices(train_indices, config)
   state = create_train_state(init_rng, config, graph, train_labels,
                              train_subgraphs, estimation_indices, wandb_logging)
-
-  gc.collect()
 
   print('initialized model (etc.)')
 

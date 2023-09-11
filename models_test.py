@@ -162,6 +162,33 @@ class ModelsTest(parameterized.TestCase):
     # Check whether outputs match.
     self.assertTrue(np.allclose(processed_nodes, expected_nodes))
 
+  def test_graph_attention_one_hop(
+      self,
+      add_self_loops = True,
+      symmetrize_edges = False,
+      adjacency_normalization = None):
+
+    # Create a dummy graph.
+    dummy_graph = get_dummy_graph(
+        add_self_loops=add_self_loops,
+        symmetrize_edges=symmetrize_edges,
+        adjacency_normalization=adjacency_normalization)
+
+    # Build 1-hop GAT.
+    model = models.OneHopGraphAttention(update_fn=lambda nodes: nodes, negative_slope=0.2)
+    rng = jax.random.PRNGKey(0)
+    params = model.init(rng, dummy_graph)
+    processed_nodes = model.apply(params, dummy_graph).nodes
+
+    # # Compute expected node features.
+    # adj = get_adjacency_matrix(dummy_graph)
+    # normalized_adj = normalize_adjacency(
+    #     adj, adjacency_normalization=adjacency_normalization)
+    # expected_nodes = normalized_adj @ dummy_graph.nodes
+
+    # # Check whether outputs match.
+    # self.assertTrue(np.allclose(processed_nodes, expected_nodes))
+
 
 if __name__ == '__main__':
   absltest.main()

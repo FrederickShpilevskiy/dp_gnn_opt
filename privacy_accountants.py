@@ -132,7 +132,7 @@ def get_training_privacy_accountant(
         noise_multiplier=config.training_noise_multiplier,
         target_delta=1 / (10 * num_training_nodes),
         sampling_probability=config.batch_size / num_training_nodes)
-  if config.model == 'gcn':
+  if config.model == 'gcn' or config.model == "gat":
     return functools.partial(
         multiterm_dpsgd_privacy_accountant,
         noise_multiplier=config.training_noise_multiplier,

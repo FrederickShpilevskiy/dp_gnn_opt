@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DP-GCN hyperparameter configuration."""
+"""DP-GAT hyperparameter configuration."""
 
 from typing import Any
 import ml_collections
@@ -26,12 +26,12 @@ def get_config():
   config.dataset = 'ogbn-arxiv-disjoint'
   config.dataset_path = 'datasets/'
   config.wandb_project = 'dp-gnn-extension'
-  config.experiment_name = 'dpgcn_baseline'
+  config.experiment_name = 'dpgat_baseline'
   config.group = 'gat_baseline'
   config.pad_subgraphs_to = 100
   config.multilabel = False
   config.adjacency_normalization = 'inverse-degree'
-  config.model = 'gcn'
+  config.model = 'gat'
   config.latent_size = 255
   config.num_encoder_layers = 1
   config.num_message_passing_steps = 1
@@ -51,11 +51,12 @@ def get_config():
   config.checkpoint_every_steps = 50
   config.rng_seed = 86583
   config.optimizer = 'adam'
-  config.learning_rate = 3e-3
+  config.learning_rate = 4e-3
   config.momentum = 0.
   config.nesterov = False
   config.eps_root = 0.1
   config.b1 = 0.9
   config.eps = 1e-12
-  config.batch_size = 10000
+  config.batch_size = 20000
+  config.negative_slope = 0.2
   return config
