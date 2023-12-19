@@ -1,0 +1,1 @@
+{"learning_rate": 0.006229598851838591, "batch_size": 9197, "num_encoder_layers": 2, "num_decoder_layers": 1, "training_noise_multiplier": 2, "max_degree": 3}

@@ -69,7 +69,9 @@ class OneHopGraphAttention(nn.Module):
 
   update_fn: Callable[[chex.Array], chex.Array]
   negative_slope: float
-  num_partitions: int = 10
+  hop: int
+  agg_function: str = 'concat' # either 'concat' or 'mean'
+  num_heads: int = 1
 
   @nn.compact
   def __call__(self, graph):
@@ -79,27 +81,37 @@ class OneHopGraphAttention(nn.Module):
     num_nodes = jax.tree_util.tree_leaves(graph.nodes)[0].shape[0]
     num_edges = senders.shape[0]
 
-    # Attention mechanism
-    attention = MultiLayerPerceptron(
-        [1],
-        None,
-        skip_connections=False,
-        activate_final=False,
-        name='attention')
+    # Multi-headed
+    weighted_edges = None
+    for k in range(self.num_heads):
+      # Attention mechanism
+      attention = MultiLayerPerceptron(
+          [1],
+          None,
+          skip_connections=False,
+          activate_final=False,
+          name=f'attention_{self.hop}_{k}')
 
-    # Attention stuff
-    raw_attention = attention(jnp.concatenate((graph.nodes[senders], graph.nodes[receivers]), axis=1))
-    nonlin_attention = nn.leaky_relu(raw_attention, negative_slope=self.negative_slope)
-    # print("receive:\n", receivers)
-    # print("send:\n", senders)
-    attention_weights = jraph.segment_softmax(
-        nonlin_attention,
-        receivers,
-        num_nodes,
-        indices_are_sorted=False)
-    # print("alpha:\n", attention_weights)
-    # Same
-    weighted_edges = attention_weights * graph.nodes[senders]
+      # Attention stuff
+      raw_attention = attention(jnp.concatenate((graph.nodes[senders], graph.nodes[receivers]), axis=1))
+      nonlin_attention = nn.leaky_relu(raw_attention, negative_slope=self.negative_slope)
+      attention_weights = jraph.segment_softmax(
+          nonlin_attention,
+          receivers,
+          num_nodes,
+          indices_are_sorted=False)
+      # Same
+      if weighted_edges is None:
+        weighted_edges = attention_weights * graph.nodes[senders]
+      else:
+        if self.agg_function == 'concat':
+          weighted_edges = jnp.concatenate((weighted_edges, attention_weights * graph.nodes[senders]), axis=1)
+        else:
+          weighted_edges = weighted_edges + attention_weights * graph.nodes[senders]
+    # Complete the mean
+    if self.agg_function == 'mean':
+      weighted_edges = weighted_edges / self.num_heads
+    # Concat across heads
     aggregated_nodes = jraph.segment_sum(
         weighted_edges,
         receivers,
@@ -120,6 +132,9 @@ class GraphAttentionNetwork(nn.Module):
   num_decoder_layers: int
   activation: Callable[[chex.Array], chex.Array]
   negative_slope: float
+  num_heads: int
+  multilabel: bool
+  num_heads_decoder: int = 1
 
   @nn.compact
   def __call__(self, graph):
@@ -139,17 +154,28 @@ class GraphAttentionNetwork(nn.Module):
                                             skip_connections=True,
                                             activate_final=True,
                                             name=f'core_{hop}')
-      core = OneHopGraphAttention(update_fn=node_update_fn, negative_slope=self.negative_slope)
+      core = OneHopGraphAttention(update_fn=node_update_fn, negative_slope=self.negative_slope, hop=hop, num_heads=self.num_heads)
       graph = core(graph)
 
     # Decoder.
-    decoder = MultiLayerPerceptron(
-        [self.latent_size] * (self.num_decoder_layers - 1) + [self.num_classes],
-        self.activation,
-        skip_connections=False,
-        activate_final=False,
-        name='decoder')
-    graph = jraph.GraphMapFeatures(embed_node_fn=decoder)(graph)
+    decoder_module = None
+    if self.multilabel:
+      # TODO: make this configurable
+      decoder = MultiLayerPerceptron([self.num_classes],
+                                     self.activation,
+                                     skip_connections=False,
+                                     activate_final=False,
+                                     name='decoder')
+      decoder_module = OneHopGraphAttention(update_fn=decoder, negative_slope=self.negative_slope, hop=self.num_message_passing_steps, num_heads=self.num_heads_decoder, agg_function='mean')
+    else:
+      decoder = MultiLayerPerceptron(
+          [self.latent_size] * (self.num_decoder_layers - 1) + [self.num_classes],
+          self.activation,
+          skip_connections=False,
+          activate_final=False,
+          name='decoder')
+      decoder_module = jraph.GraphMapFeatures(embed_node_fn=decoder)
+    graph = decoder_module(graph)
     return graph
 
 class OneHopGraphConvolution(nn.Module):

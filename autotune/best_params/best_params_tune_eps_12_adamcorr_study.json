@@ -1,0 +1,1 @@
+{"batch_size": 13106, "eps_root": 3.3608791264817395e-07, "l2_norm_threshold": 2.542190717861672e-05, "learning_rate": 0.0017731253120670694, "max_degree": 6, "num_decoder_layers": 2, "num_encoder_layers": 2, "training_noise_multiplier": 3.9699575614542946, "trial_number": 26}

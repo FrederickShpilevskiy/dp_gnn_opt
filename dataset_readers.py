@@ -266,7 +266,7 @@ class GraphSAINTTransductiveDataset(Dataset):
 
     self.base_name = base_name
 
-    # TODO: TEMPERORY SOLUTION
+    # TODO: TEMPORARY SOLUTION
     if self.name == "reddit-transductive":
       from torch_geometric.datasets import Reddit
       from torch_geometric.utils import mask_to_index
@@ -278,6 +278,10 @@ class GraphSAINTTransductiveDataset(Dataset):
       self.train_nodes = mask_to_index(data.train_mask).numpy()
       self.validation_nodes = mask_to_index(data.val_mask).numpy()
       self.test_nodes = mask_to_index(data.test_mask).numpy()
+
+      print("shape:", self.node_features.shape, self.senders.shape, self.receivers.shape, self.node_labels.shape)
+    elif self.name == "ppi-disjoint":
+      pass
     else:
       base_path = os.path.join(dataset_path, base_name)
 
@@ -344,17 +348,72 @@ class GraphSAINTDisjointDataset(GraphSAINTTransductiveDataset):
 
     self.name = dataset_name
 
-    train_split = set(self.train_nodes)
-    validation_split = set(self.validation_nodes)
-    test_split = set(self.test_nodes)
+    if self.name == "ppi-disjoint":
+      from torch_geometric.datasets import PPI
+      from torch_geometric.utils import mask_to_index
+      import torch
+      # train
+      data = PPI(root='./datasets/ppi', split='train')
+      # how to index graphs
+      self.train_graph_index = np.zeros((len(data), 2))
+      prev_node = 0
+      for i in range(len(data)):
+        self.train_graph_index[i, 0] = prev_node
+        prev_node += data[i].x.shape[0]
+        self.train_graph_index[i, 1] = prev_node
+      # add the data
+      self.senders = data.edge_index[0, :].numpy()
+      self.receivers = data.edge_index[1, :].numpy()
+      self.node_features = data.x.numpy()
+      self.node_labels = data.y.numpy()
+      train_mask = torch.ones((data.x.shape[0]), dtype=bool)
+      val_mask = torch.zeros((data.x.shape[0]), dtype=bool)
+      test_mask = torch.zeros((data.x.shape[0]), dtype=bool)
+      n_nodes = data.x.shape[0]
+      n_edges = data.edge_index.shape[1]
+      # print("shape:", self.node_features.shape)
+      # print("senders:", self.senders[0:5], self.senders[n_edges-5:n_edges])
+      # print("receivs:", self.receivers[0:5], self.receivers[n_edges-5:n_edges])
+      # val
+      data = PPI(root='./datasets/ppi', split='val')
+      self.senders = np.concatenate((self.senders, data.edge_index[0, :].numpy() + n_nodes))
+      self.receivers = np.concatenate((self.receivers, data.edge_index[1, :].numpy() + n_nodes))
+      self.node_features = np.concatenate((self.node_features, data.x.numpy()))
+      self.node_labels = np.concatenate((self.node_labels, data.y.numpy()))
+      train_mask = torch.concatenate((train_mask, torch.zeros((data.x.shape[0]), dtype=bool)))
+      val_mask = torch.concatenate((val_mask, torch.ones((data.x.shape[0]), dtype=bool)))
+      test_mask = torch.concatenate((test_mask, torch.zeros((data.x.shape[0]), dtype=bool)))
+      # print("shape:", self.node_features.shape)
+      # print("senders:", self.senders[n_edges:n_edges+5], self.senders[n_edges+data.edge_index.shape[1]-5:n_edges+data.edge_index.shape[1]])
+      # print("receivs:", self.receivers[n_edges:n_edges+5], self.receivers[n_edges+data.edge_index.shape[1]-5:n_edges+data.edge_index.shape[1]])
+      n_nodes += data.x.shape[0]
+      n_edges += data.edge_index.shape[1]
+      # val
+      data = PPI(root='./datasets/ppi', split='test')
+      self.senders = np.concatenate((self.senders, data.edge_index[0, :].numpy() + n_nodes))
+      self.receivers = np.concatenate((self.receivers, data.edge_index[1, :].numpy() + n_nodes))
+      self.node_features = np.concatenate((self.node_features, data.x.numpy()))
+      self.node_labels = np.concatenate((self.node_labels, data.y.numpy()))
+      train_mask = torch.concatenate((train_mask, torch.zeros((data.x.shape[0]), dtype=bool)))
+      val_mask = torch.concatenate((val_mask, torch.zeros((data.x.shape[0]), dtype=bool)))
+      test_mask = torch.concatenate((test_mask, torch.ones((data.x.shape[0]), dtype=bool)))
+      # print("shape:", self.node_features.shape, self.senders.shape, self.receivers.shape, self.node_labels.shape)
+      # masks
+      self.train_nodes = mask_to_index(train_mask).numpy()
+      self.validation_nodes = mask_to_index(val_mask).numpy()
+      self.test_nodes = mask_to_index(test_mask).numpy()
+    else:
+      train_split = set(self.train_nodes)
+      validation_split = set(self.validation_nodes)
+      test_split = set(self.test_nodes)
 
-    graph_train = _get_graph_for_split(self.adj_full, train_split)
-    graph_validation = _get_graph_for_split(self.adj_full, validation_split)
-    graph_test = _get_graph_for_split(self.adj_full, test_split)
-    graph = nx.union_all((graph_train, graph_validation, graph_test))
+      graph_train = _get_graph_for_split(self.adj_full, train_split)
+      graph_validation = _get_graph_for_split(self.adj_full, validation_split)
+      graph_test = _get_graph_for_split(self.adj_full, test_split)
+      graph = nx.union_all((graph_train, graph_validation, graph_test))
 
-    self.senders = [e[0] for e in graph.edges]
-    self.receivers = [e[1] for e in graph.edges]
+      self.senders = [e[0] for e in graph.edges]
+      self.receivers = [e[1] for e in graph.edges]
 
 
 def _get_graph_for_split(adj_full,
@@ -385,7 +444,7 @@ def get_dataset(dataset_name, dataset_path):
       return OGBDisjointDataset(dataset_name, dataset_path)
     return OGBTransductiveDataset(dataset_name, dataset_path)
 
-  graphsaint_datasets = ['reddit', 'yelp', 'flickr']
+  graphsaint_datasets = ['reddit', 'yelp', 'flickr', 'ppi']
   if any(dataset_name.startswith(name) for name in graphsaint_datasets):
     if dataset_name.endswith('disjoint'):
       return GraphSAINTDisjointDataset(dataset_name, dataset_path)

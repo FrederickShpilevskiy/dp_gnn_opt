@@ -25,9 +25,10 @@ def get_config():
 
   config.dataset = 'ogbn-arxiv-disjoint'
   config.dataset_path = 'datasets/'
-  config.wandb_project = 'dp-gnn-extension'
-  config.experiment_name = 'dpgcn_baseline'
-  config.group = 'gat_baseline'
+  config.wandb_project = 'my_wandb_project'
+  config.experiment_name = 'dpadambc_eps_3'
+  config.group = 'eps_3_ogbn_arxiv'
+  config.multi_graph = False
   config.pad_subgraphs_to = 100
   config.multilabel = False
   config.adjacency_normalization = 'inverse-degree'
@@ -38,24 +39,23 @@ def get_config():
   config.num_decoder_layers = 2
   config.activation_fn = 'tanh'
   config.num_classes = 40
-  config.max_degree = 7
+  config.max_degree = 6
   config.differentially_private_training = True
-  config.num_estimation_samples = 10000
-  config.l2_norm_clip_percentile = 75
-  config.l2_norm_threshold = 0.
-  config.training_noise_multiplier = 2.
+  config.l2_norm_threshold = 3e-4
+  config.training_noise_multiplier = 2.7
   config.num_training_steps = 10000
-  config.max_training_epsilon = 12
+  config.max_training_epsilon = 3
   config.evaluate_every_steps = 10
   config.resample_every_steps = 0
   config.checkpoint_every_steps = 50
   config.rng_seed = 86583
-  config.optimizer = 'adam'
-  config.learning_rate = 3e-3
+  config.optimizer = 'adamcorr'
+  config.learning_rate = 1e-4
   config.momentum = 0.
   config.nesterov = False
-  config.eps_root = 0.1
+  config.eps_root = 4.3e-9
   config.b1 = 0.9
   config.eps = 1e-12
   config.batch_size = 10000
+  config.virtual_batch_size = 5000
   return config

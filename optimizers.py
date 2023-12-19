@@ -21,28 +21,13 @@ import jax.numpy as jnp
 import optax
 from optim import adam, adamcorr
 
-def compute_opt_noise(l2_norms_threshold, base_sensitivity, noise_multiplier):
-  return jax.tree_map(lambda l2_norm_clip: l2_norm_clip * base_sensitivity * noise_multiplier, 
-      l2_norms_threshold)
-
-
-def clip_by_norm(updates,
-                 l2_norms_threshold):
-  """Standard clipping by L2 norm."""
-
-  grad_norms = jax.tree_map(
-      jax.vmap(jnp.linalg.norm),
-      updates)
-  divisors = jax.tree_map(
-      lambda g_norm, l2_norm_clip: jnp.maximum(g_norm / l2_norm_clip, 1.0),
-      grad_norms, l2_norms_threshold)
-  return jax.tree_map(
-      jax.vmap(lambda g, div: g / div),
-      updates, divisors)
+def compute_opt_noise(l2_norm_threshold, base_sensitivity, noise_multiplier):
+  return l2_norm_threshold * base_sensitivity * noise_multiplier
 
 
 def dp_aggregate(
-    l2_norms_threshold,
+    batch_size,
+    l2_norm_threshold,
     base_sensitivity,
     noise_multiplier,
     init_rng,
@@ -50,8 +35,7 @@ def dp_aggregate(
 ):
   """Aggregates gradients based on the DP-SGD algorithm.
 
-  This method clips per-example gradients to some l2 norm, sums them up,
-  and adds noise to the sum.
+  This method adds noise to the summed clipped gradients (that have been normalized by batch size).
 
   WARNING: Unlike other transforms, `dp_aggregate` expects
   the input updates to have a batch dimension in the 0th axis. That is, this
@@ -64,7 +48,8 @@ def dp_aggregate(
     [Abadi et al, 2016](https://arxiv.org/abs/1607.00133)
 
   Args:
-    l2_norms_threshold: max L2 norm of the per-example gradients for each layer.
+    batch_size: size of each batch
+    l2_norm_threshold: max L2 norm of the per-example gradients across all layers.
     base_sensitivity: ratio of sensitivity to the clipping norm.
     noise_multiplier: ratio of noise standard deviation to the sensitivity.
     return_type: 'original' or 'custom', determines if summed updates should be included too ('custom')
@@ -73,34 +58,23 @@ def dp_aggregate(
   Returns:
     A `GradientTransformation`.
   """
-  noise_stds = compute_opt_noise(l2_norms_threshold, base_sensitivity, noise_multiplier)
+  noise_std = compute_opt_noise(l2_norm_threshold, base_sensitivity, noise_multiplier)
 
   def init_fn(params):
     del params
     return optax.DifferentiallyPrivateAggregateState(
         rng_key=init_rng)
 
-  def update_fn(updates, state, params):
+  def update_fn(summed_updates, state, params):
     del params
-    grads_flat, grads_treedef = jax.tree_util.tree_flatten(updates)
-    batch_size = grads_flat[0].shape[0]
-
-    if any(g.ndim == 0 or batch_size != g.shape[0] for g in grads_flat):
-      raise ValueError(
-          'Unlike other transforms, `dp_aggregate` expects'
-          ' `updates` to have a batch dimension in the 0th axis. That is, this'
-          ' function expects per-example gradients as input.')
+    grads_flat, grads_treedef = jax.tree_util.tree_flatten(summed_updates)
 
     new_key, *rngs = jax.random.split(state.rng_key, len(grads_flat) + 1)
     rng_tree = jax.tree_util.tree_unflatten(grads_treedef, rngs)
 
-    clipped_updates = clip_by_norm(updates, l2_norms_threshold)
-    summed_updates = jax.tree_map(
-        lambda g: jnp.sum(g, axis=0),
-        clipped_updates)
     noise = jax.tree_map(
-        lambda g, std, rng: (std * jax.random.normal(rng, g.shape, g.dtype)),
-        summed_updates, noise_stds, rng_tree)
+        lambda g, rng: (noise_std * jax.random.normal(rng, g.shape, g.dtype)),
+        summed_updates, rng_tree)
     noisy_updates = jax.tree_map(lambda g, noise: (g + noise), summed_updates,
                                  noise)
     if return_type == 'original':
@@ -113,13 +87,13 @@ def dp_aggregate(
   return optax.GradientTransformation(init_fn, update_fn)
 
 
-def dpsgd(learning_rate, l2_norms_threshold,
+def dpsgd(batch_size, learning_rate, l2_norm_threshold,
           base_sensitivity, noise_multiplier,
           init_rng, momentum,
           nesterov):
   """A differentially-private version of SGD."""
   return optax.chain(
-      dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier,
+      dp_aggregate(batch_size, l2_norm_threshold, base_sensitivity, noise_multiplier,
                    init_rng), optax.sgd(learning_rate, momentum, nesterov))
 
 
@@ -131,21 +105,21 @@ def dpsgd(learning_rate, l2_norms_threshold,
 #       dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier,
 #                    init_rng), optax.adam(learning_rate))
 
-def dpadam(learning_rate, b1, eps, l2_norms_threshold,
+def dpadam(batch_size, learning_rate, b1, eps, l2_norm_threshold,
            base_sensitivity, noise_multiplier,
            init_rng):
   """A differentially-private version of Adam."""
   b2 = 1 - (1 - b1)**2
   return optax.chain(
-      dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier,
+      dp_aggregate(batch_size, l2_norm_threshold, base_sensitivity, noise_multiplier,
                    init_rng, return_type='custom'), adam(learning_rate, b1, b2, eps))
 
 
-def dpadamcorr(batch_size, learning_rate, b1, eps_root, l2_norms_threshold,
+def dpadamcorr(batch_size, learning_rate, b1, eps_root, l2_norm_threshold,
                base_sensitivity, noise_multiplier, init_rng):
   """A differentially-private version of Adam Corr."""
   b2 = 1 - (1 - b1)**2
-  sigmas = compute_opt_noise(l2_norms_threshold, base_sensitivity, noise_multiplier)
+  sigma = compute_opt_noise(l2_norm_threshold, base_sensitivity, noise_multiplier)
   return optax.chain(
-      dp_aggregate(l2_norms_threshold, base_sensitivity, noise_multiplier, init_rng,
-                   return_type='custom'), adamcorr(sigmas, learning_rate, b1, b2, 0, eps_root))
+      dp_aggregate(batch_size, l2_norm_threshold, base_sensitivity, noise_multiplier, init_rng,
+                   return_type='custom'), adamcorr(sigma, learning_rate, b1, b2, 0, eps_root))

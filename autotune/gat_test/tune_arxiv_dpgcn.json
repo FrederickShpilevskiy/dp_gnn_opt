@@ -1,0 +1,13 @@
+[{"key": "optimizer", "value": "adam", "key_type": "const"},
+{"key": "group", "value": "ogbn_arxiv_dpgcn", "key_type": "const"},
+{"key": "dataset", "value": "ogbn-arxiv", "key_type": "const"},
+{"key": "num_classes", "value": 40, "key_type": "const"},
+{"key": "activation_fn", "value": "tanh", "key_type": "const"},
+{"key": "max_degree", "value": [3, 30], "key_type": "tune", "value_type": "int"},
+{"key": "batch_size", "value": [500, 30000], "key_type": "tune", "value_type": "int"},
+{"key": "learning_rate", "value": [1e-5, 1e-1], "key_type": "tune", "value_type": "log"},
+{"key": "num_message_passing_steps", "value": 1, "key_type": "const"},
+{"key": "num_encoder_layers", "value": [1, 2], "key_type": "tune", "value_type": "categorical"},
+{"key": "num_decoder_layers", "value": [1, 2], "key_type": "tune", "value_type": "categorical"},
+{"key": "training_noise_multiplier", "value": [0.5, 3.5], "key_type": "tune", "value_type": "float"},
+{"key": "l2_norm_threshold", "value": [1e-5, 1], "key_type": "tune", "value_type": "log"}]

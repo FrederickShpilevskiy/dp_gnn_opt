@@ -1,0 +1,1 @@
+{"batch_size": 3191, "learning_rate": 0.0014460403861416323, "num_decoder_layers": 1, "num_encoder_layers": 1, "num_training_steps": 4714, "optimizer": "adam", "trial_number": 36}

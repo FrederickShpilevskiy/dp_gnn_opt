@@ -37,15 +37,16 @@ import numpy as np
 import optax
 import wandb
 import random
+import math
 
 import input_pipeline
 import models
 import normalizations
 import optimizers
 import privacy_accountants
+import sys
 
 _SUBGRAPH_PADDING_VALUE = -1
-
 
 @jax.jit
 def compute_logits(state,
@@ -59,8 +60,16 @@ def compute_loss(logits,
                  labels):
   """Computes the mean softmax cross-entropy loss."""
   assert labels.shape == logits.shape, f'Got incompatible shapes: logits as {logits.shape}, labels as {labels.shape}'
-
   loss = optax.softmax_cross_entropy(logits=logits, labels=labels)
+  loss = jnp.mean(loss)
+  return loss
+
+@jax.jit
+def compute_loss_multilabel(logits,
+                            labels):
+  """Computes the mean softmax cross-entropy loss or sigmoid cross-entropy if multilabel."""
+  assert labels.shape == logits.shape, f'Got incompatible shapes: logits as {logits.shape}, labels as {labels.shape}'
+  loss = jnp.sum(optax.sigmoid_binary_cross_entropy(logits=logits, labels=labels), axis=-1)
   loss = jnp.mean(loss)
   return loss
 
@@ -170,12 +179,28 @@ def reshape_after_pmap(arr):
   return arr.reshape((arr.shape[0] * arr.shape[1], *arr.shape[2:]))
 
 
-@functools.partial(jax.jit, static_argnames='adjacency_normalization')
+@jax.jit
+def get_dp_summed_grads(per_example_gradients,
+                        l2_norm_threshold):
+  """Requires per example gradients that are normalized by batch size. Standard clipping by L2 norm."""
+
+  grad_norms = jax.tree_map(
+      jax.vmap(jnp.linalg.norm),
+      per_example_gradients)
+  divisors = jax.tree_map(lambda g_norm: jnp.maximum(g_norm / l2_norm_threshold, 1.0), grad_norms)
+  clipped_updates = jax.tree_map(jax.vmap(lambda g, div: g / div),
+                                 per_example_gradients, divisors)
+  return jax.tree_map(lambda g: jnp.sum(g, axis=0), clipped_updates)
+
+
+@functools.partial(jax.jit, static_argnames=['adjacency_normalization', 'l2_norm_threshold', 'batch_size', 'multilabel'])
 def compute_updates_for_dp(state,
                            graph, labels,
                            subgraphs,
-                           node_indices,
-                           adjacency_normalization):
+                           adjacency_normalization,
+                           l2_norm_threshold,
+                           batch_size,
+                           multilabel=False):
   """Computes gradients for a single batch for differentially private training."""
 
   def subgraph_loss(params, graph,
@@ -189,31 +214,19 @@ def compute_updates_for_dp(state,
         adjacency_normalization=adjacency_normalization)
     subgraph_preds = state.apply_fn(params, subgraph).nodes
     node_preds = subgraph_preds[0, :]
+    if multilabel:
+      return compute_loss_multilabel(node_preds, node_labels)
     return compute_loss(node_preds, node_labels)
-
-  # Reshape leading axes for multiple devices.
-  node_labels = labels[node_indices]
-  subgraph_indices = subgraphs
-  # node_labels = reshape_before_pmap(labels[node_indices])
-  # subgraph_indices = reshape_before_pmap(subgraphs)
-
-  # Compute per-example gradients.
-  per_example_gradient_fn = jax.vmap(
-      jax.grad(subgraph_loss), in_axes=(None, None, 0, 0))
-  # per_example_gradient_fn = jax.pmap(
-  #     per_example_gradient_fn,
-  #     axis_name='devices',
-  #     in_axes=(None, None, 0, 0),
-  #     devices=jax.local_devices())
-  # jax.make_jaxpr(per_example_gradient_fn)(state.params, graph, node_labels, subgraph_indices)
-  grads = per_example_gradient_fn(state.params, graph, node_labels,
-                                  subgraph_indices)
-
-  # Undo reshape.
-  # grads = jax.tree_map(reshape_after_pmap, grads)
-
-  # Normalize gradients by batch size.
-  return jax.tree_map(lambda grad: grad / grad.shape[0], grads)
+  # Get labels
+  node_labels = labels
+  # Get per example gradients
+  per_example_gradient_fn = jax.vmap(jax.grad(subgraph_loss), in_axes=(None, None, 0, 0))
+  per_example_grads = per_example_gradient_fn(state.params, graph, node_labels, subgraphs)
+  # Batch-normalize
+  normed_per_example_grads = jax.tree_map(lambda grad: grad / batch_size, per_example_grads)
+  # Clip and sum
+  summed_grads = get_dp_summed_grads(normed_per_example_grads, l2_norm_threshold)
+  return summed_grads
 
 
 @jax.jit
@@ -237,27 +250,21 @@ def evaluate_predictions(logits, labels,
   return loss, accuracy
 
 
-@functools.partial(
-    jax.jit, static_argnames=['apply_fn', 'adjacency_normalization'])
-def estimate_clipping_thresholds(
-    apply_fn,
-    params,
-    l2_norm_clip_percentile, graph,
-    labels, subgraphs, estimation_indices,
-    adjacency_normalization):
-  """Estimates gradient clipping thresholds."""
-  dummy_state = train_state.TrainState.create(
-      apply_fn=apply_fn, params=params, tx=optax.identity())
-  estimation_subgraphs = jnp.asarray(subgraphs[estimation_indices])
-  grads = compute_updates_for_dp(dummy_state, graph, labels, estimation_subgraphs,
-                                 estimation_indices, adjacency_normalization)
-  del estimation_subgraphs
-  grad_norms = jax.tree_map(jax.vmap(jnp.linalg.norm), grads)
-  get_percentile = lambda norms: jnp.percentile(norms, l2_norm_clip_percentile)
-  l2_norms_threshold = jax.tree_map(get_percentile, grad_norms)
-  l2_norm_median = jnp.median(tree_flatten_1dim(l2_norms_threshold))
-  l2_norms_threshold = jax.tree_map(lambda layer: l2_norm_median, grad_norms)
-  return l2_norms_threshold
+@jax.jit
+def evaluate_predictions_multilabel(logits, labels,
+                                    mask):
+  """Evaluates the multilabel model on the given dataset."""
+  loss = jnp.sum(optax.sigmoid_binary_cross_entropy(logits, labels), axis=-1)
+  loss = jnp.where(mask, loss, 0.)
+  loss = jnp.sum(loss) / jnp.sum(mask)
+  preds = jnp.where((nn.sigmoid(logits) > 0.5), 1., 0.)
+
+  TP = jnp.sum(jnp.logical_and(preds == 1, labels == 1))
+  FP = jnp.sum(jnp.logical_and(preds == 1, labels == 0))
+  FN = jnp.sum(jnp.logical_and(preds == 0, labels == 1))
+
+  f1 = TP / (TP + 0.5*(FP + FN))
+  return loss, f1
 
 
 def create_model(config, graph,
@@ -284,12 +291,13 @@ def create_model(config, graph,
         latent_size=config.latent_size,
         num_classes=config.num_classes,
         activation=getattr(nn, config.activation_fn),
-        negative_slope=config.negative_slope)
+        negative_slope=config.negative_slope,
+        num_heads=config.num_heads,
+        num_heads_decoder=config.num_heads_decoder,
+        multilabel=config.multilabel)
   else:
     raise ValueError(f'Unsupported model: {config.model}.')
   print("initializing...")
-  # This uses the rest of the memory
-  # TODO: this uses too much memory
   params = jax.jit(model.init)(rng, graph)
   print("initialized")
   return model, params
@@ -353,32 +361,27 @@ def create_optimizer(
     graph,
     labels,
     subgraphs,
-    estimation_indices,
     rng,
     wandb_logging,
 ):
   """Creates the optimizer."""
   # TODO: single clipping threshold
   if config.differentially_private_training:
-    if config.l2_norm_threshold is not None and config.l2_norm_threshold != 0:
-      l2_norms_threshold = jax.tree_map(lambda layer: np.array(config.l2_norm_threshold), params)
-    else:
-      l2_norms_threshold = estimate_clipping_thresholds(
-          apply_fn, params, config.l2_norm_clip_percentile, graph, labels,
-          subgraphs, estimation_indices, config.adjacency_normalization)
     base_sensitivity = compute_base_sensitivity(config)
     privacy_params = {
-        'l2_norms_threshold': l2_norms_threshold,
+        'batch_size': config.batch_size,
+        'l2_norm_threshold': config.l2_norm_threshold,
         'init_rng': rng,
         'base_sensitivity': base_sensitivity,
         'noise_multiplier': config.training_noise_multiplier,
     }
     
-    sigmas = optimizers.compute_opt_noise(l2_norms_threshold, base_sensitivity, 
+    sigma = optimizers.compute_opt_noise(config.l2_norm_threshold, base_sensitivity, 
                                           config.training_noise_multiplier)
     if wandb_logging:
-      wandb.config.clipping_thresholds = tree_flatten_1dim(l2_norms_threshold)
-      wandb.config.sigmas = tree_flatten_1dim(sigmas)
+      wandb.config.clipping_threshold = config.l2_norm_threshold
+      wandb.config.sigma = sigma
+
 
   print("Got clipping thresholds")
 
@@ -404,7 +407,6 @@ def create_optimizer(
   
   if config.optimizer == 'adamcorr':
     opt_params = {
-        'batch_size': config.batch_size,
         'learning_rate': config.learning_rate,
         'b1': config.b1,
         'eps_root': config.eps_root,
@@ -420,15 +422,13 @@ def create_train_state(
     graph,
     labels,
     subgraphs,
-    estimation_indices,
     wandb_logging,
 ):
   """Creates initial `TrainState`."""
   model_rng, opt_rng = jax.random.split(rng)
   model, params = create_model(config, graph, model_rng)
   apply_fn = jax.jit(model.apply)
-  tx = create_optimizer(apply_fn, params, config, graph, labels, subgraphs,
-                        estimation_indices, opt_rng, wandb_logging)
+  tx = create_optimizer(apply_fn, params, config, graph, labels, subgraphs, opt_rng, wandb_logging)
   return train_state.TrainState.create(
       apply_fn=apply_fn, params=params, tx=tx)
 
@@ -442,14 +442,30 @@ def get_max_training_epsilon(
 
 
 def compute_metrics(logits, labels,
-                    masks):
-  train_loss, train_accuracy = evaluate_predictions(logits, labels,
-                                                    masks['train'])
-  val_loss, val_accuracy = evaluate_predictions(logits, labels,
-                                                masks['validation'])
-  test_loss, test_accuracy = evaluate_predictions(logits, labels,
-                                                  masks['test'])
-  return {
+                    masks, multilabel=False):
+  if multilabel:
+    train_loss, train_f1_micro = evaluate_predictions_multilabel(logits, labels,
+                                                      masks['train'])
+    val_loss, val_f1_micro = evaluate_predictions_multilabel(logits, labels,
+                                                  masks['validation'])
+    test_loss, test_f1_micro = evaluate_predictions_multilabel(logits, labels,
+                                                    masks['test'])
+    return {
+      'train_loss': train_loss,
+      'train_f1_micro': train_f1_micro,
+      'val_loss': val_loss,
+      'val_f1_micro': val_f1_micro,
+      'test_loss': test_loss,
+      'test_f1_micro': test_f1_micro,
+    }
+  else:
+    train_loss, train_accuracy = evaluate_predictions(logits, labels,
+                                                      masks['train'])
+    val_loss, val_accuracy = evaluate_predictions(logits, labels,
+                                                  masks['validation'])
+    test_loss, test_accuracy = evaluate_predictions(logits, labels,
+                                                    masks['test'])
+    return {
       'train_loss': train_loss,
       'train_accuracy': train_accuracy,
       'val_loss': val_loss,
@@ -480,15 +496,6 @@ def log_metrics(step, metrics,
     wandb.log({**metrics, **adam_summary_stats})
 
 
-def get_estimation_indices(
-    train_indices,
-    config):
-  """Returns node indices for estimating clipping thresholds."""
-  if config.differentially_private_training:
-    return train_indices[:config.num_estimation_samples]
-  return None
-
-
 def train_and_evaluate(config,
                        workdir):
   """Execute model training and evaluation loop.
@@ -504,6 +511,8 @@ def train_and_evaluate(config,
   gc.collect()
   # Seed for reproducibility.
   rng = jax.random.PRNGKey(config.rng_seed)
+  # Set the metric TODO: put in config
+  eval_metric = 'test_f1_micro' if config.multilabel else 'test_accuracy'
 
   # Set up logging.
   wandb_logging = False
@@ -519,11 +528,12 @@ def train_and_evaluate(config,
   # Get datasets.
   dataset = input_pipeline.get_dataset(base_graph, config, dataset_rng)
   # graph, labels, masks = dataset
-  graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
+  graph, labels, masks, train_graph_index = jax.tree_map(jnp.asarray, dataset)
   # oh_labels = np.zeros((len(labels), config.num_classes))
   # oh_labels[np.arange(len(labels)), labels] = 1
   # labels = oh_labels
-  labels = jax.nn.one_hot(labels, config.num_classes)
+  if not config.multilabel:
+    labels = jax.nn.one_hot(labels, config.num_classes)
   train_mask = masks['train']
   train_indices = jnp.where(train_mask)[0]
   # train_indices = np.where(train_mask)[0]
@@ -555,7 +565,6 @@ def train_and_evaluate(config,
     del subgraphs
     # TEMP ============================
     # train_subgraphs = None
-
   print('sampled subgraphs')
 
   # Initialize privacy accountant.
@@ -567,9 +576,8 @@ def train_and_evaluate(config,
 
   # Construct and initialize model.
   rng, init_rng = jax.random.split(rng)
-  estimation_indices = get_estimation_indices(train_indices, config)
   state = create_train_state(init_rng, config, graph, train_labels,
-                             train_subgraphs, estimation_indices, wandb_logging)
+                             train_subgraphs, wandb_logging)
 
   print('initialized model (etc.)')
 
@@ -589,9 +597,9 @@ def train_and_evaluate(config,
 
   # Log metrics after initialization.
   logits = compute_logits(state, graph)
-  metrics_after_init = compute_metrics(logits, labels, masks)
+  metrics_after_init = compute_metrics(logits, labels, masks, config.multilabel)
   metrics_after_init['epsilon'] = 0
-  accuracy = metrics_after_init['test_accuracy']
+  test_metric = metrics_after_init[eval_metric]
   log_metrics(
       0, metrics_after_init, adam_summary_stats, summary_writer, wandb_logging, postfix='')
 
@@ -606,36 +614,51 @@ def train_and_evaluate(config,
   hooks = [report_progress, profiler]
 
   for step in range(initial_step, config.num_training_steps):
-
     # Perform one step of training.
     with jax.profiler.StepTraceAnnotation('train', step_num=step):
       # Sample batch.
       step_rng = jax.random.fold_in(train_rng, step)
-      indices = jax.random.choice(step_rng, num_training_nodes,
-                                  (config.batch_size,))
 
-      subgraphs = jnp.asarray(train_subgraphs[indices])
-
-      # Compute gradients.
-      if config.differentially_private_training:
-        grads = compute_updates_for_dp(state, graph, train_labels,
-                                       subgraphs, indices,
-                                       config.adjacency_normalization)
+      subgraphs, batch_labels = None, None
+      if config.multi_graph:
+        graph_indices = jax.random.choice(step_rng, train_graph_index.shape[0],
+                                          (config.batch_size,))
+        indices = train_graph_index[graph_indices, :].astype(int)
+        for i in range(indices.shape[0]):
+          if subgraphs is None:
+            subgraphs = jnp.asarray(train_subgraphs[indices[0, 0]:indices[0, 1]])
+          else:
+            subgraphs = jnp.concatenate((subgraphs, train_subgraphs[indices[i, 0]:indices[i, 1]]))
+          if batch_labels is None:
+            batch_labels = train_labels[indices[0, 0]:indices[0, 1]]
+          else:
+            batch_labels = jnp.concatenate((batch_labels, train_labels[indices[i, 0]:indices[i, 1]]))
+        del graph_indices, indices
       else:
-        # TEMP ============================
-        # with jax.disable_jit():
-        grads = compute_updates_for_dp(state, graph, train_labels,
-                                      subgraphs, indices,
-                                      config.adjacency_normalization)
-        grads = jax.tree_map(lambda g: jnp.sum(g, axis=0), grads)
-        # print("GRAD")
-        # grads_flat, _ = jax.tree_util.tree_flatten(grads)
-        # for grad in grads_flat:
-        #   print(grad.shape)
-        # TEMP ============================
-        # grads = compute_updates(state, graph, train_labels, indices)
+        indices = jax.random.choice(step_rng, num_training_nodes,
+                                    (config.batch_size,))
+        subgraphs = jnp.asarray(train_subgraphs[indices])
+        batch_labels = train_labels[indices]
 
-      del subgraphs
+      # Virtual batch sizes
+      batch_size = subgraphs.shape[0]
+      virtual_batch_num = math.ceil(batch_size / config.virtual_batch_size)
+      grads = None
+      for i in range(virtual_batch_num):
+        start = i*config.virtual_batch_size
+        end = (i+1)*config.virtual_batch_size
+        subgraphs_indices = subgraphs[start:end]
+        batch_label_indices = batch_labels[start:end]
+        v_grads = compute_updates_for_dp(state, graph, batch_label_indices,
+                                         subgraphs_indices, config.adjacency_normalization, 
+                                         config.l2_norm_threshold, batch_size,
+                                         config.multilabel)
+        if grads is None:
+          grads = v_grads
+        else:
+          grads = jax.tree_map(lambda grad, g: grad + g, grads, v_grads)
+        del subgraphs_indices, batch_label_indices, v_grads
+      del subgraphs, batch_labels
 
       # Update parameters.
       state = update_model(state, grads)
@@ -662,9 +685,9 @@ def train_and_evaluate(config,
 
         # Compute metrics.
         logits = compute_logits(state, graph)
-        metrics_during_training = compute_metrics(logits, labels, masks)
+        metrics_during_training = compute_metrics(logits, labels, masks, config.multilabel)
         metrics_during_training['epsilon'] = training_epsilon
-        accuracy = metrics_during_training['test_accuracy']
+        test_metric = metrics_during_training[eval_metric]
         log_metrics(
             step,
             metrics_during_training,
@@ -685,7 +708,7 @@ def train_and_evaluate(config,
       old_num_training_nodes = num_training_nodes
       rng, dataset_rng = jax.random.split(rng)
       dataset = input_pipeline.get_dataset(base_graph, config, dataset_rng)
-      graph, labels, masks = jax.tree_map(jnp.asarray, dataset)
+      graph, labels, masks, train_graph_index = jax.tree_map(jnp.asarray, dataset)
       labels = jax.nn.one_hot(labels, config.num_classes)
       train_mask = masks['train']
       train_indices = jnp.where(train_mask)[0]
@@ -711,21 +734,18 @@ def train_and_evaluate(config,
         # We only need the subgraphs for training nodes.
         train_subgraphs = subgraphs[train_indices]
         del subgraphs
-        # TEMP ============================
-        # train_subgraphs = None
       logging.info('resampling graph: node change %d -> %d, orginal graph has %d nodes', 
                    old_num_training_nodes, num_training_nodes, np.shape(base_graph.node_features)[0])
+    # garbage collect
+    gc.collect()
 
   print("done training")
 
   if wandb_logging:
     wandb.finish()
-
-  # backend = jax.lib.xla_bridge.get_backend()
-  # for buf in backend.live_buffers(): buf.delete()
   gc.collect()
 
-  return accuracy
+  return test_metric
 
 
 

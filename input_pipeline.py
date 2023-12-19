@@ -182,6 +182,9 @@ def load_graph(config):
   
 def get_dataset(graph, config, rng):
   """Sample graph and return graph dataset."""
+  train_graph_index = None
+  if config.multi_graph:
+    train_graph_index = graph.train_graph_index
   graph = subsample_graph(graph, config.max_degree, rng)
   masks = compute_masks_for_splits(graph)
   graph, labels = convert_to_graphstuple(graph)
@@ -189,4 +192,4 @@ def get_dataset(graph, config, rng):
   graph = normalizations.normalize_edges_with_mask(
       graph, mask=None, adjacency_normalization=config.adjacency_normalization)
   print("FINISHED DATASET LOADING")
-  return graph, labels, masks
+  return graph, labels, masks, train_graph_index

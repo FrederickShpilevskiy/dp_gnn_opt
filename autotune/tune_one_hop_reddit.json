@@ -1,0 +1,12 @@
+[{"key": "optimizer", "value": "adam", "key_type": "const"},
+{"key": "group", "value": "reddit_r=1", "key_type": "const"},
+{"key": "dataset", "value": "reddit-transductive", "key_type": "const"},
+{"key": "num_classes", "value": 41, "key_type": "const"},
+{"key": "resample_every_steps", "value": 0, "key_type": "const"},
+{"key": "activation_fn", "value": "relu", "key_type": "const"},
+{"key": "max_degree", "value": 100, "key_type": "const"},
+{"key": "batch_size", "value": [500, 20000], "key_type": "tune", "value_type": "int"},
+{"key": "learning_rate", "value": [1e-4, 1e-1], "key_type": "tune", "value_type": "log"},
+{"key": "num_message_passing_steps", "value": 1, "key_type": "const"},
+{"key": "num_encoder_layers", "value": [1, 2], "key_type": "tune", "value_type": "categorical"},
+{"key": "num_decoder_layers", "value": [1, 2], "key_type": "tune", "value_type": "categorical"}]

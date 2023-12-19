@@ -1,0 +1,1 @@
+{"learning_rate": 0.0020214873344156273, "num_decoder_layers": 1, "num_encoder_layers": 2, "num_training_steps": 3556, "optimizer": "adam", "trial_number": 25}

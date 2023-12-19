@@ -1,0 +1,1 @@
+{"activation_fn": "relu", "batch_size": 2821, "learning_rate": 0.0007053435365604249, "max_degree": 25, "num_decoder_layers": 1, "num_encoder_layers": 1, "num_training_steps": 3823, "trial_number": 32}

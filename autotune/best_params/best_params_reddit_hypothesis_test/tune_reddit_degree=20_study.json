@@ -1,0 +1,1 @@
+{"batch_size": 7634, "l2_norm_threshold": 0.00031251011086738835, "learning_rate": 0.003425408153294829, "num_decoder_layers": 1, "num_encoder_layers": 2, "training_noise_multiplier": 1.5145977087632945, "trial_number": 21}
